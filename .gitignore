@@ -1,0 +1,7 @@
+_build/
+tmp/
+screenshots/
+vendor/
+*.install
+*.merlin
+.DS_Store
