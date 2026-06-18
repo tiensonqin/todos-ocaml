@@ -14,6 +14,7 @@ type todo_row =
 type t =
   { db : Datascript.db
   ; next_created_at : int
+  ; storage : Datascript.storage option
   }
 
 let title_attr = "todo/title"
@@ -22,7 +23,7 @@ let created_at_attr = "todo/created-at"
 let date_attr = "todo/date"
 let time_attr = "todo/time"
 
-let empty () = { db = Datascript.empty_db (); next_created_at = 0 }
+let empty () = { db = Datascript.empty_db (); next_created_at = 0; storage = None }
 
 let string_result = function
   | Datascript.Result_value (Datascript.String value) -> value
@@ -53,7 +54,7 @@ let todo_of_row = function
   | _ -> invalid_arg "unexpected todo query row"
 ;;
 
-let rows db =
+let query_rows db =
   Datascript.q_string
     db
     "[:find ?e ?title ?completed ?created-at ?date ?time
@@ -66,10 +67,27 @@ let rows db =
 ;;
 
 let all t =
-  rows t.db
+  query_rows t.db
   |> List.map todo_of_row
   |> List.sort (fun left right -> compare right.created_at left.created_at)
   |> List.map (fun row -> row.todo)
+;;
+
+let persist t =
+  match t.storage with
+  | None -> t
+  | Some storage ->
+    Datascript.store ~storage t.db;
+    t
+;;
+
+let of_db ?storage db =
+  let next_created_at =
+    query_rows db
+    |> List.map todo_of_row
+    |> List.fold_left (fun max_created row -> max max_created row.created_at) 0
+  in
+  { db; next_created_at; storage }
 ;;
 
 let add ?(date = "") ?(time = "") t ~title =
@@ -88,7 +106,7 @@ let add ?(date = "") ?(time = "") t ~title =
         ; Datascript.Add (Datascript.Temp_id "todo", time_attr, Datascript.String (String.trim time))
         ]
     in
-    { db = report.Datascript.db_after; next_created_at = created_at })
+    { t with db = report.Datascript.db_after; next_created_at = created_at } |> persist)
 ;;
 
 let find_todo t ~id =
@@ -106,7 +124,7 @@ let toggle t ~id =
             (Datascript.Entity_id id, completed_attr, Datascript.Bool (not todo.completed))
         ]
     in
-    { t with db = report.Datascript.db_after }
+    { t with db = report.Datascript.db_after } |> persist
 ;;
 
 let delete t ~id =
@@ -114,7 +132,7 @@ let delete t ~id =
   | None -> t
   | Some _ ->
     let report = Datascript.transact t.db [ Datascript.RetractEntity (Datascript.Entity_id id) ] in
-    { t with db = report.Datascript.db_after }
+    { t with db = report.Datascript.db_after } |> persist
 ;;
 
 let rename ?date ?time t ~id ~title =
@@ -142,7 +160,7 @@ let rename ?date ?time t ~id ~title =
                     (Datascript.Entity_id id, time_attr, Datascript.String (String.trim time))
                 ]))
       in
-      { t with db = report.Datascript.db_after })
+      { t with db = report.Datascript.db_after } |> persist)
 ;;
 
 let demo () =
@@ -170,6 +188,24 @@ let demo () =
        else store)
     (empty ())
     tasks
+;;
+
+let sqlite ?(seed_if_empty = true) ~path () =
+  let storage = Todo_sqlite.storage path in
+  match Datascript.restore storage, seed_if_empty with
+  | Some db, _ -> of_db ~storage db
+  | None, true ->
+    let store = { (demo ()) with storage = Some storage } in
+    persist store
+  | None, false -> { (empty ()) with storage = Some storage }
+;;
+
+let default_sqlite_path () =
+  match Sys.getenv_opt "TODOS_OCAML_DB" with
+  | Some path when String.trim path <> "" -> path
+  | _ ->
+    let home = Option.value ~default:(Sys.getcwd ()) (Sys.getenv_opt "HOME") in
+    Filename.concat (Filename.concat home "Documents") "todos.sqlite3"
 ;;
 
 let normalized value = value |> String.trim |> String.lowercase_ascii

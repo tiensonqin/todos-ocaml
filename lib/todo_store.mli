@@ -10,6 +10,8 @@ type t
 
 val empty : unit -> t
 val demo : unit -> t
+val sqlite : ?seed_if_empty:bool -> path:string -> unit -> t
+val default_sqlite_path : unit -> string
 val add : ?date:string -> ?time:string -> t -> title:string -> t
 val toggle : t -> id:int -> t
 val delete : t -> id:int -> t

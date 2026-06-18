@@ -1,7 +1,7 @@
 (test
  (name test_todo_store)
  (modules test_todo_store)
- (libraries todos_ocaml))
+ (libraries todos_ocaml unix))
 
 (test
  (name test_todo_presentation)

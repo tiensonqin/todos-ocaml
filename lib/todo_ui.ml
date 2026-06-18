@@ -36,9 +36,11 @@ let upcoming_tab = "upcoming"
 let add_tab = "add"
 let search_tab = "search"
 
-let initial_model =
-  { app_state = App_state.initial; selected_tab = today_tab; editor = None }
+let create_initial_model ?(app_state = App_state.initial) () =
+  { app_state; selected_tab = today_tab; editor = None }
 ;;
+
+let initial_model = create_initial_model ()
 
 let new_editor = { mode = New_task; title = ""; date = "Today"; time = "" }
 
@@ -269,11 +271,11 @@ let view model ~dispatch =
          ~on_dismiss:(dispatch Close_editor)
 ;;
 
-let component graph =
+let component ?initial_app_state graph =
   let open Bonsai.Let_syntax in
   let model, dispatch =
     Bonsai.state_machine
-      ~default_model:initial_model
+      ~default_model:(create_initial_model ?app_state:initial_app_state ())
       ~apply_action:(fun _context model action -> apply model action)
       graph
   in

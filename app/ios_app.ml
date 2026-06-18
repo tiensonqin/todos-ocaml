@@ -5,8 +5,17 @@ module Swiftui = Bonsai_apple_swiftui
 let app = ref None
 let window = ref None
 
+let initial_app_state () =
+  let store = Todos.Todo_store.sqlite ~path:(Todos.Todo_store.default_sqlite_path ()) () in
+  Todos.Todo_app_state.create ~store ()
+;;
+
 let install_root_view ~time_source app_delegate _application _launch_options =
-  let swiftui_app = Swiftui.App.create ~time_source Todos.Todo_ui.component in
+  let swiftui_app =
+    Swiftui.App.create
+      ~time_source
+      (Todos.Todo_ui.component ~initial_app_state:(initial_app_state ()))
+  in
   Swiftui.App.flush_and_render swiftui_app;
   let root = Option.value_exn (Swiftui.App.view swiftui_app) in
   let root_window = Swiftui.window root in
