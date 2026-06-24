@@ -3,7 +3,7 @@ open Core
 module Apple = Bonsai_apple
 module Backend = Apple.For_testing.Backend
 module Renderer = Apple.Renderer.Make (Backend)
-module Todos = Todos.Todo_runtime
+module Todos = Todo_core
 
 let failf fmt = Printf.ksprintf failwith fmt
 

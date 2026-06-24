@@ -2,7 +2,7 @@ open! Core
 open! Bonsai_web
 open! Js_of_ocaml
 
-module Todos = Todos.Todo_core
+module Todos = Todo_core
 module Screen = Todos.Screen
 module Attr = Vdom.Attr
 module Node = Vdom.Node

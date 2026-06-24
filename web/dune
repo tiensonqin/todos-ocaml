@@ -1,7 +1,7 @@
 (executables
  (names todos_web todos_db_worker)
  (modes js)
- (libraries bonsai_web core js_of_ocaml todos_ocaml yojson)
+ (libraries bonsai_web core js_of_ocaml todos_ocaml.core yojson)
  (preprocess
   (pps ppx_jane bonsai.ppx_bonsai js_of_ocaml-ppx)))
 

@@ -1,4 +1,4 @@
-module Todos = Todos.Todo_runtime
+module Todos = Todo_core
 
 type controls =
   { route : Todos.Screen.Route.t

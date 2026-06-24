@@ -1,7 +1,7 @@
 open! Core
 open! Js_of_ocaml
 
-module Todos = Todos.Todo_core
+module Todos = Todo_core
 module Json = Yojson.Safe
 module Json_util = Yojson.Safe.Util
 

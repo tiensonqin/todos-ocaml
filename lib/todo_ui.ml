@@ -1,7 +1,7 @@
 open! Core
 
 module Apple = Bonsai_apple
-module Todos = Todos.Todo_runtime
+module Todos = Todo_core
 module Screen = Todos.Screen
 module Route = Screen.Route
 
