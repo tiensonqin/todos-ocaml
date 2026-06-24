@@ -55,7 +55,7 @@ let install_root_view ~time_source app_delegate _application _launch_options =
   let swiftui_app =
     Swiftui.App.create
       ~time_source
-      (Todo_ui.component ~run_command:(run_todos_command ~path:db_path))
+      (Todo_ui.adaptive_component ~run_command:(run_todos_command ~path:db_path))
   in
   Swiftui.App.flush_and_render swiftui_app;
   let root = Option.value_exn (Swiftui.App.view swiftui_app) in

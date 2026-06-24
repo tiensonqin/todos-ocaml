@@ -35,18 +35,13 @@ let empty_state title =
   |> Apple.padding
 ;;
 
-let add_bar ?field_width model ~dispatch =
+let add_bar model ~dispatch =
   let field =
     Apple.text_field
       ~text:model.Todos.Model.draft
       ~placeholder:"New task"
       ~on_change:(fun draft -> dispatch (Todos.Action.Set_draft draft))
       ()
-  in
-  let field =
-    match field_width with
-    | None -> field
-    | Some width -> Apple.frame ~width field
   in
   Apple.hstack
     ~spacing:8.
@@ -114,6 +109,41 @@ let content_list model ~route ~search ~set_selected_todo_id ~dispatch =
       ~row:(todo_row ~dispatch ~on_select:set_selected_todo_id)
 ;;
 
+let route_content model controls ~route ~dispatch =
+  let screen =
+    Screen.create
+      model
+      ~route
+      ~search:controls.search
+      ~selected_todo_id:controls.selected_todo_id
+  in
+  Apple.vstack
+    ~spacing:8.
+    (List.concat
+       [ [ Apple.vstack
+             ~spacing:4.
+             [ Apple.text ~style:Title2 ~weight:Semibold screen.title
+             ; Apple.text
+                 ~color:Secondary
+                 [%string
+                   "%{screen.active_count#Int} active, %{screen.completed_count#Int} completed"]
+             ]
+         ; add_bar model ~dispatch
+         ]
+       ; (match model.error with
+          | None -> []
+          | Some error -> [ Apple.text ~color:Secondary error ])
+       ; [ content_list
+             model
+             ~route
+             ~search:controls.search
+             ~set_selected_todo_id:controls.set_selected_todo_id
+             ~dispatch
+         ]
+       ])
+  |> Apple.padding
+;;
+
 let detail_view screen =
   match screen.Screen.selected_todo with
   | None ->
@@ -143,29 +173,7 @@ let split_view model controls ~dispatch =
   in
   Apple.navigation_split
     ~sidebar:(sidebar ~route:controls.route ~set_route:controls.set_route)
-    ~content:
-      (Apple.vstack
-         ~spacing:16.
-         [ Apple.vstack
-             ~spacing:4.
-             [ Apple.text ~style:Title2 ~weight:Semibold screen.title
-             ; Apple.text
-                 ~color:Secondary
-                 [%string
-                   "%{screen.active_count#Int} active, %{screen.completed_count#Int} completed"]
-             ]
-         ; add_bar ~field_width:420. model ~dispatch
-         ; (match model.error with
-            | None -> Apple.text ""
-            | Some error -> Apple.text ~color:Secondary error)
-         ; content_list
-             model
-             ~route:controls.route
-             ~search:controls.search
-             ~set_selected_todo_id:controls.set_selected_todo_id
-             ~dispatch
-         ]
-       |> Apple.padding)
+    ~content:(route_content model controls ~route:controls.route ~dispatch)
     ~detail:(detail_view screen)
   |> Apple.searchable ~text:controls.search ~on_change:controls.set_search
   |> Apple.toolbar
@@ -181,7 +189,31 @@ let view ?(controls = default_controls) ({ model; dispatch } : Todos.Controller.
   split_view model controls ~dispatch
 ;;
 
-let component ?(run_command = Todos.Controller.ignore_command) graph =
+let mobile_view ?(controls = default_controls) ({ model; dispatch } : Todos.Controller.t) =
+  let tab route system_image =
+    Apple.tab
+      ~id:(Route.id route)
+      ~title:(Route.title route)
+      ~system_image
+      (route_content model controls ~route ~dispatch)
+  in
+  Apple.tab_view
+    ~selected:(Route.id controls.route)
+    ~on_select:(fun route_id -> controls.set_route (Route.of_id route_id))
+    [ tab Route.All "tray.full"
+    ; tab Active "circle"
+    ; tab Completed "checkmark.circle"
+    ]
+  |> Apple.searchable ~text:controls.search ~on_change:controls.set_search
+;;
+
+let adaptive_view ?(controls = default_controls) controller =
+  Apple.adaptive_layout
+    ~compact:(mobile_view controller ~controls)
+    ~regular:(view controller ~controls)
+;;
+
+let component_with_view ?(run_command = Todos.Controller.ignore_command) render graph =
   let open Bonsai.Let_syntax in
   let controller = Todos.Controller.component ~run_command graph in
   let route, set_route = Bonsai.state Route.All graph in
@@ -206,8 +238,19 @@ let component ?(run_command = Todos.Controller.ignore_command) graph =
   and set_search
   and selected_todo_id
   and set_selected_todo_id in
-  view
+  render
     controller
     ~controls:
       { route; search; selected_todo_id; set_route; set_search; set_selected_todo_id }
+;;
+
+let component ?run_command graph =
+  component_with_view ?run_command (fun controller ~controls -> view controller ~controls) graph
+;;
+
+let adaptive_component ?run_command graph =
+  component_with_view
+    ?run_command
+    (fun controller ~controls -> adaptive_view controller ~controls)
+    graph
 ;;

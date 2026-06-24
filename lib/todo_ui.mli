@@ -11,7 +11,16 @@ type controls =
 
 val default_controls : controls
 val view : ?controls:controls -> Todos.Controller.t -> Bonsai_apple.node
+val mobile_view : ?controls:controls -> Todos.Controller.t -> Bonsai_apple.node
+val adaptive_view : ?controls:controls -> Todos.Controller.t -> Bonsai_apple.node
 val component
+  :  ?run_command:
+       (dispatch:(Todos.Action.t -> unit Bonsai.Effect.t)
+        -> Todos.Command.t
+        -> unit Bonsai.Effect.t)
+  -> Bonsai.graph
+  -> Bonsai_apple.node Bonsai.t
+val adaptive_component
   :  ?run_command:
        (dispatch:(Todos.Action.t -> unit Bonsai.Effect.t)
         -> Todos.Command.t
