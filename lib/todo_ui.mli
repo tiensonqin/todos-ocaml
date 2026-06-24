@@ -1,33 +1,20 @@
-type editor_mode =
-  | New_task
-  | Edit_task of int
+module Todos = Todos.Todo_runtime
 
-type editor =
-  { mode : editor_mode
-  ; title : string
-  ; date : string
-  ; time : string
+type controls =
+  { route : Todos.Screen.Route.t
+  ; search : string
+  ; selected_todo_id : string
+  ; set_route : Todos.Screen.Route.t -> unit Bonsai.Effect.t
+  ; set_search : string -> unit Bonsai.Effect.t
+  ; set_selected_todo_id : string -> unit Bonsai.Effect.t
   }
 
-type model =
-  { app_state : Todo_app_state.t
-  ; selected_tab : string
-  ; editor : editor option
-  }
-
-type action =
-  | App_action of Todo_app_state.action
-  | Select_tab of string
-  | Open_new_task
-  | Open_editor of Todo_store.todo
-  | Update_editor_title of string
-  | Update_editor_date of string
-  | Update_editor_time of string
-  | Close_editor
-  | Save_editor
-
-val initial_model : model
-val create_initial_model : ?app_state:Todo_app_state.t -> unit -> model
-val apply : model -> action -> model
-val view : model -> dispatch:(action -> unit Bonsai.Effect.t) -> Bonsai_apple.node
-val component : ?initial_app_state:Todo_app_state.t -> Bonsai.graph -> Bonsai_apple.node Bonsai.t
+val default_controls : controls
+val view : ?controls:controls -> Todos.Controller.t -> Bonsai_apple.node
+val component
+  :  ?run_command:
+       (dispatch:(Todos.Action.t -> unit Bonsai.Effect.t)
+        -> Todos.Command.t
+        -> unit Bonsai.Effect.t)
+  -> Bonsai.graph
+  -> Bonsai_apple.node Bonsai.t

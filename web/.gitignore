@@ -1,0 +1,5 @@
+dist/
+node_modules/
+todos_web.bc.js
+todos_db_worker.bc.js
+app/*.bc.js

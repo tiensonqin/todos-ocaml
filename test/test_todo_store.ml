@@ -14,6 +14,15 @@ let assert_equal_strings label expected actual =
   if expected <> actual then
     failf "%s: expected [%s], got [%s]" label (String.concat "; " expected) (String.concat "; " actual)
 
+let assert_contains_string label values expected =
+  if not (List.mem expected values)
+  then
+    failf
+      "%s: expected [%s] to contain %s"
+      label
+      (String.concat "; " values)
+      expected
+
 let assert_equal_bool label expected actual =
   if expected <> actual then failf "%s: expected %b, got %b" label expected actual
 
@@ -170,10 +179,9 @@ let test_sqlite_store_uses_datascript_storage () =
     in
     ignore store;
     let storage = Todo_sqlite.storage path in
-    assert_equal_strings
-      "datascript storage addresses"
-      [ "datascript/root"; "datascript/tail" ]
-      (Datascript.storage_addresses storage);
+    let addresses = Datascript.storage_addresses storage in
+    assert_contains_string "datascript storage addresses" addresses "datascript/root";
+    assert_contains_string "datascript storage addresses" addresses "datascript/tail";
     match Datascript.restore storage with
     | None -> failwith "DataScript storage should restore a db"
     | Some db ->

@@ -1,11 +1,28 @@
 (library
  (name todos)
  (public_name todos_ocaml)
+ (modules
+  (:standard \ todo_ui))
  (foreign_stubs
   (language c)
-  (names todo_sqlite_stubs))
+  (names todo_sqlite_stubs todo_datascript_sqlite_stubs))
  (c_library_flags
   (:standard -lsqlite3))
- (libraries bonsai bonsai_apple datascript_ocaml)
+ (libraries
+  bonsai
+  core
+  core_kernel.caml_threads
+  datascript_ocaml
+  persistent_sorted_set_ocaml
+  threads.posix)
  (preprocess
-  (pps bonsai.ppx_bonsai)))
+  (pps ppx_jane bonsai.ppx_bonsai)))
+
+(library
+ (name todos_ocaml_apple_ui)
+ (public_name todos_ocaml.apple_ui)
+ (wrapped false)
+ (modules todo_ui)
+ (libraries bonsai bonsai_apple core todos_ocaml)
+ (preprocess
+  (pps ppx_jane bonsai.ppx_bonsai)))

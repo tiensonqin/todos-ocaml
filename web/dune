@@ -1,0 +1,18 @@
+(executables
+ (names todos_web todos_db_worker)
+ (modes js)
+ (libraries bonsai_web core js_of_ocaml todos_ocaml yojson)
+ (preprocess
+  (pps ppx_jane bonsai.ppx_bonsai js_of_ocaml-ppx)))
+
+(subdir
+ app
+ (rule
+  (alias build_web_static)
+  (deps ../todos_web.bc.js ../todos_db_worker.bc.js)
+  (targets todos_web.bc.js todos_db_worker.bc.js)
+  (mode promote)
+  (action
+   (progn
+    (copy ../todos_web.bc.js todos_web.bc.js)
+    (copy ../todos_db_worker.bc.js todos_db_worker.bc.js)))))

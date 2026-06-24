@@ -50,19 +50,18 @@ let run_todos_command ~path ~dispatch (command : Todos.Command.t) =
       ignore (Caml_threads.Thread.create run ()))
 ;;
 
-let install_root_view ~time_source app_delegate _application _launch_options =
+let install_root_view ~time_source _delegate _application _launch_options =
   let db_path = Todos.Runtime.default_db_path () in
   let swiftui_app =
     Swiftui.App.create
       ~time_source
       (Todo_ui.component ~run_command:(run_todos_command ~path:db_path))
   in
+  app := Some swiftui_app;
   Swiftui.App.flush_and_render swiftui_app;
   let root = Option.value_exn (Swiftui.App.view swiftui_app) in
   let root_window = Swiftui.window root in
-  app := Some swiftui_app;
   window := Some root_window;
-  ignore app_delegate;
   true
 ;;
 

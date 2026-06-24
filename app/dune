@@ -26,12 +26,53 @@
  (extra_objects BonsaiNativeSwiftUI)
  (libraries
   todos_ocaml
+  todos_ocaml.apple_ui
   bonsai
   bonsai.driver
   bonsai_apple.swiftui
   core)
  (preprocess
   (pps ppx_jane bonsai.ppx_bonsai)))
+
+(executable
+ (name mac_app)
+ (modules mac_app)
+ (enabled_if
+  (= %{context_name} simulator))
+ (extra_objects BonsaiNativeSwiftUIMac)
+ (link_flags
+  (:standard -cclib -framework -cclib AppKit -cclib -framework -cclib SwiftUI))
+ (libraries
+  todos_ocaml
+  todos_ocaml.apple_ui
+  bonsai
+  bonsai.driver
+  bonsai_apple.swiftui
+  core
+  core_kernel.caml_threads
+  threads.posix)
+ (preprocess
+  (pps ppx_jane bonsai.ppx_bonsai)))
+
+(rule
+ (target BonsaiNativeSwiftUIMac.o)
+ (deps
+  /Users/tiensonqin/Codes/projects/bonsai-native/apple/swiftui/BonsaiNativeSwiftUIMac.swift)
+ (enabled_if
+  (= %{context_name} simulator))
+ (action
+  (run
+   xcrun
+   swiftc
+   -target
+   arm64-apple-macosx14.0
+   -sdk
+   /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+   -parse-as-library
+   -emit-object
+   %{deps}
+   -o
+   %{target})))
 
 (rule
  (target BonsaiNativeSwiftUI.o)

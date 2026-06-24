@@ -1,7 +1,7 @@
 opam-version: "2.0"
-synopsis: "iOS todo app built with DataScript and Bonsai Native"
+synopsis: "Cross-platform todo app built with DataScript and Bonsai Native"
 description: """
-A native iOS todo app whose domain state is stored in datascript and rendered with bonsai-native.
+A cross-platform todo app whose shared OCaml state is stored in datascript and rendered with Bonsai Native or Bonsai Web.
 """
 maintainer: "Tienson Qin"
 authors: ["Tienson Qin"]
@@ -10,6 +10,11 @@ depends: [
   "ocaml" {>= "5.2.1" & < "5.3.0"}
   "dune" {>= "3.17"}
   "datascript_ocaml"
+  "persistent_sorted_set_ocaml"
+  "yojson"
+  "bonsai_web"
+  "js_of_ocaml"
+  "js_of_ocaml-ppx"
   "bonsai" {= "v0.18~preview.130.100+614"}
   "core" {= "v0.18~preview.130.100+614"}
   "ppx_jane" {= "v0.18~preview.130.100+614"}
@@ -17,9 +22,10 @@ depends: [
   "bonsai_apple"
 ]
 pin-depends: [
-  ["datascript_ocaml.dev" "git+https://github.com/logseq/datascript-ocaml.git"]
-  ["bonsai_native.dev" "git+https://github.com/logseq/bonsai-native.git"]
-  ["bonsai_apple.dev" "git+https://github.com/logseq/bonsai-native.git"]
+  ["persistent_sorted_set_ocaml.dev" "git+https://github.com/logseq/persistent-sorted-set-ocaml.git#83a3483bc6406337a1c0f60ac1813d8339a94c42"]
+  ["datascript_ocaml.dev" "git+https://github.com/logseq/datascript-ocaml.git#40308e1cd6573cdfa840a28518ed0fcac7f8832e"]
+  ["bonsai_native.dev" "git+https://github.com/logseq/bonsai-native.git#9a87d81f925ca617755cf3eb341cfd287a0750b3"]
+  ["bonsai_apple.dev" "git+https://github.com/logseq/bonsai-native.git#9a87d81f925ca617755cf3eb341cfd287a0750b3"]
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs]

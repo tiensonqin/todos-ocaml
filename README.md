@@ -1,35 +1,42 @@
 # todos-ocaml
 
-Native iOS todo app built with `datascript-ocaml` for domain state and
-`bonsai-native` for UI rendering.
+Cross-platform todo app built with `datascript-ocaml` for shared domain state,
+`bonsai-native` for Apple UI, and `bonsai_web`/`js_of_ocaml` for the web UI.
 
 ## What is included
 
-- DataScript-backed todo store in `lib/todo_store.ml`.
-- Focused model tests in `test/test_todo_store.ml`.
-- Bonsai Native iOS entrypoint in `app/ios_app.ml`.
-- Bundle id: `com.tiensonqin.todos`.
-- Standard UIKit search chrome through `Apple.searchable`; on iOS 26 SDK builds,
-  the system search controller receives the platform Liquid Glass treatment.
+- Shared todo state, actions, screen model, DataScript store, and native runtime
+  in `lib/todo_core.ml` and `lib/todo_runtime.ml`.
+- Native Apple UI in `lib/todo_ui.ml`.
+- iOS SwiftUI entrypoint in `app/ios_app.ml`.
+- macOS SwiftUI desktop entrypoint in `app/mac_app.ml`.
+- Web UI and SQLite wasm worker in `web/`.
+- Focused tests in `test/`.
 
 ## Local dependencies
 
-The opam file pins the GitHub repositories:
+The opam file pins the upgraded dependency revisions:
+
+- `persistent_sorted_set_ocaml`: `83a3483bc6406337a1c0f60ac1813d8339a94c42`
+- `datascript_ocaml`: `40308e1cd6573cdfa840a28518ed0fcac7f8832e`
+- `bonsai_native` / `bonsai_apple`: `9a87d81f925ca617755cf3eb341cfd287a0750b3`
 
 ```sh
-opam pin add -y datascript_ocaml git+https://github.com/logseq/datascript-ocaml.git
-opam pin add -y bonsai_native git+https://github.com/logseq/bonsai-native.git
-opam pin add -y bonsai_apple git+https://github.com/logseq/bonsai-native.git
 opam install . --deps-only --with-test
 ```
 
 ## Test
 
 ```sh
-dune runtest test
+opam exec --switch=simulator -- dune runtest --workspace dune-workspace.simulator \
+  _build/simulator/test/test_todo_store.exe \
+  _build/simulator/test/test_todo_app_state.exe \
+  _build/simulator/test/test_todo_presentation.exe \
+  _build/simulator/test/test_todo_ui.exe \
+  _build/simulator/test/test_todo_model.exe
 ```
 
-## Build for iOS simulator
+## Build iOS
 
 Prepare the `simulator` switch using the Bonsai Native Apple build notes, then run:
 
@@ -37,8 +44,23 @@ Prepare the `simulator` switch using the Bonsai Native Apple build notes, then r
 IOS_TARGET=arm64-apple-ios17.0-simulator \
 IOS_ARCH=arm64 \
 IOS_SDKROOT=$(xcrun --sdk iphonesimulator --show-sdk-path) \
-opam exec -- dune build app/Todos.app --workspace dune-workspace.simulator
+opam exec --switch=simulator -- dune build --workspace dune-workspace.simulator \
+  _build/simulator.ios/app/Todos.app
 ```
 
 For a physical device, prepare the `device` switch and build with
 `--workspace dune-workspace.device`.
+
+## Build macOS Desktop
+
+```sh
+opam exec --switch=simulator -- dune build --workspace dune-workspace.simulator \
+  _build/simulator/app/mac_app.exe
+```
+
+## Build Web
+
+```sh
+opam exec -- dune build @web/build_web_static
+python3 web/server.py
+```

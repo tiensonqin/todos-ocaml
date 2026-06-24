@@ -103,7 +103,7 @@ let delete_sql addresses =
 
 let storage path =
   ensure_schema path;
-  let storage_store entries _delete_addresses =
+  let storage_store entries =
     let sql =
       entries |> List.map upsert_sql |> List.filter (fun sql -> sql <> "") |> String.concat "\n"
     in
