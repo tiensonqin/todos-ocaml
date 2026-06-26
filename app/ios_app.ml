@@ -13,7 +13,7 @@ let dispatch_on_main ~dispatch action =
 let run_todos_command ~path ~dispatch (command : Todos.Command.t) =
   Swiftui.Apple.Action.of_thunk (fun () ->
       match command.request with
-      | Load_window _ ->
+      | Load_page _ ->
           let run () =
             let result = Todos.Runtime.execute_command ~path command in
             dispatch_on_main ~dispatch result
@@ -23,8 +23,8 @@ let run_todos_command ~path ~dispatch (command : Todos.Command.t) =
           let run () =
             match Todos.Runtime.execute_command ~path command with
             | Store_failed _ as result -> dispatch_on_main ~dispatch result
-            | Loaded_window _ | Persisted _ -> ()
-            | Load_window _ | Set_draft _ | Submit_new _ | Update_title _
+            | Loaded_page _ | Persisted _ -> ()
+            | Load_page _ | Set_draft _ | Submit_new _ | Update_title _
             | Toggle _ | Delete _ ->
                 ()
           in

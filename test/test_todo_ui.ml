@@ -145,13 +145,21 @@ let take values ~count =
   in
   if count <= 0 then [] else loop count values []
 
+let drop values ~count =
+  let rec loop remaining values =
+    match (remaining, values) with
+    | 0, values | _, ([] as values) -> values
+    | remaining, _ :: values -> loop (remaining - 1) values
+  in
+  if count <= 0 then values else loop count values
+
 let runtime_backed_mobile_app all_todos =
   Backend.reset ();
   let dispatched_commands = ref [] in
   let run_command ~dispatch command () =
     dispatched_commands := command :: !dispatched_commands;
     match command.Todos.Command.request with
-    | Load_window { limit; search } ->
+    | Load_page { limit; offset; search } ->
         let search = String.strip search |> String.lowercase in
         let source =
           if String.is_empty search then all_todos
@@ -162,10 +170,12 @@ let runtime_backed_mobile_app all_todos =
                   ~substring:search)
         in
         dispatch
-          (Todos.Action.Loaded_window
+          (Todos.Action.Loaded_page
              {
-               todos = take source ~count:limit;
-               has_more = List.length source > limit;
+               todos = source |> drop ~count:offset |> take ~count:limit;
+               has_more = List.length source > offset + limit;
+               offset;
+               search;
              })
           ()
     | Persist _ -> ()
@@ -196,7 +206,8 @@ let runtime_backed_mobile_app all_todos =
       Bonsai_native.Graph.subscribe graph ~key:"todos-query-lifecycle"
         ~default:() (fun ~emit:_ ->
           controller.dispatch
-            (Todos.Action.Load_window { limit = visible_todo_limit; search })
+            (Todos.Action.Load_page
+               { limit = visible_todo_limit; offset = 0; search })
             ();
           fun () -> ())
     in
@@ -390,10 +401,13 @@ let test_mobile_loads_more_when_bottom_sentinel_appears () =
     ~count:80;
   Backend.appear_exn root ~path:[ 0; 1; 0; 80 ];
   (match !dispatched_commands with
-  | { Todos.Command.request = Load_window { limit = 160; search = "" }; _ } :: _
-    ->
+  | {
+      Todos.Command.request = Load_page { limit = 80; offset = 80; search = "" };
+      _;
+    }
+    :: _ ->
       ()
-  | _ -> failf "load-more should dispatch Load_window 160");
+  | _ -> failf "load-more should dispatch the next fixed-size page");
   let output = Backend.show root in
   assert_contains "newly visible page" output ~substring:"Task 00160";
   assert_occurrences "rows after sentinel appears" output ~substring:"list-row#"
@@ -412,22 +426,25 @@ let test_mobile_runtime_backed_load_more_loads_next_window () =
   let initial_output = Backend.show root in
   assert_contains "initial window last task" initial_output
     ~substring:"Task 00080";
-  assert_contains "initial sentinel is keyed by next window" initial_output
-    ~substring:"key=load-more-160";
+  assert_contains "initial sentinel is keyed by next page" initial_output
+    ~substring:"key=load-more-80";
   assert_not_contains "initial window excludes next page" initial_output
     ~substring:"Task 00081";
   assert_occurrences "initial runtime-backed rows" initial_output
     ~substring:"list-row#" ~count:80;
   Backend.appear_exn root ~path:[ 0; 1; 0; 80 ];
   (match !dispatched_commands with
-  | { Todos.Command.request = Load_window { limit = 160; search = "" }; _ } :: _
-    ->
+  | {
+      Todos.Command.request = Load_page { limit = 80; offset = 80; search = "" };
+      _;
+    }
+    :: _ ->
       ()
-  | _ -> failf "runtime-backed load-more should request Load_window 160");
+  | _ -> failf "runtime-backed load-more should request the second page");
   let output = Backend.show root in
   assert_contains "loaded next window" output ~substring:"Task 00160";
   assert_contains "next sentinel is remounted for the following window" output
-    ~substring:"key=load-more-240";
+    ~substring:"key=load-more-160";
   assert_not_contains "does not render beyond requested window" output
     ~substring:"Task 00161";
   assert_not_contains "never renders full dataset" output
@@ -436,18 +453,56 @@ let test_mobile_runtime_backed_load_more_loads_next_window () =
     ~substring:"list-row#" ~count:160;
   Backend.appear_exn root ~path:[ 0; 1; 0; 160 ];
   (match !dispatched_commands with
-  | { Todos.Command.request = Load_window { limit = 240; search = "" }; _ } :: _
-    ->
+  | {
+      Todos.Command.request =
+        Load_page { limit = 80; offset = 160; search = "" };
+      _;
+    }
+    :: _ ->
       ()
-  | _ -> failf "second runtime-backed load-more should request Load_window 240");
+  | _ -> failf "second runtime-backed load-more should request the third page");
   let output = Backend.show root in
   assert_contains "loaded third window" output ~substring:"Task 00240";
   assert_contains "third sentinel is remounted for the following window" output
-    ~substring:"key=load-more-320";
+    ~substring:"key=load-more-240";
   assert_not_contains "third window stays bounded" output
     ~substring:"Task 00241";
   assert_occurrences "runtime-backed rows after second load-more" output
     ~substring:"list-row#" ~count:240
+
+let test_mobile_runtime_backed_load_more_keeps_rendered_rows_capped () =
+  let all_todos =
+    Stdlib.List.init 10_000 (fun index ->
+        let created_at_ms = index + 1 in
+        todo
+          ~id:(Printf.sprintf "todo-%05d" created_at_ms)
+          ~title:(Printf.sprintf "Task %05d" created_at_ms)
+          ~created_at_ms ())
+  in
+  let root, dispatched_commands = runtime_backed_mobile_app all_todos in
+  let load_more () =
+    let output = Backend.show root in
+    let row_count = count_substring output ~substring:"list-row#" in
+    Backend.appear_exn root ~path:[ 0; 1; 0; row_count ]
+  in
+  for _ = 1 to 8 do
+    load_more ()
+  done;
+  let output = Backend.show root in
+  assert_contains "later page remains visible" output ~substring:"Task 00720";
+  assert_not_contains "oldest rows are trimmed from render tree" output
+    ~substring:"Task 00001";
+  assert_occurrences "rendered rows stay capped after many pages" output
+    ~substring:"list-row#" ~count:240;
+  match !dispatched_commands with
+  | {
+      Todos.Command.request =
+        Load_page { limit = 80; offset = 640; search = "" };
+      _;
+    }
+    :: _ ->
+      ()
+  | _ -> failf "load-more should keep requesting fixed-size pages"
 
 let test_component_initial_load_uses_bounded_window_only () =
   Backend.reset ();
@@ -456,7 +511,9 @@ let test_component_initial_load_uses_bounded_window_only () =
   let app = App.create (Todo_ui.adaptive_component ~run_command) in
   App.flush_and_render app;
   match !commands with
-  | [ { Todos.Command.request = Load_window { limit; search = "" }; _ } ]
+  | [
+   { Todos.Command.request = Load_page { limit; offset = 0; search = "" }; _ };
+  ]
     when limit = Todo_ui.default_controls.visible_todo_limit ->
       ()
   | commands ->
@@ -464,12 +521,13 @@ let test_component_initial_load_uses_bounded_window_only () =
         commands
         |> List.map ~f:(fun command ->
             match command.Todos.Command.request with
-            | Load_window { limit; search } ->
-                Printf.sprintf "Load_window %d search=%S" limit search
+            | Load_page { limit; offset; search } ->
+                Printf.sprintf "Load_page %d offset=%d search=%S" limit offset
+                  search
             | Persist _ -> "Persist")
         |> Stdlib.String.concat ", "
       in
-      failf "initial load should only use a bounded window, got: %s" rendered
+      failf "initial load should only use a bounded page, got: %s" rendered
 
 let test_search_change_dispatches_bounded_db_query () =
   Backend.reset ();
@@ -484,7 +542,11 @@ let test_search_change_dispatches_bounded_db_query () =
   in
   Backend.change_search_exn root ~path:[] ~text:"needle";
   match !commands with
-  | { Todos.Command.request = Load_window { limit = 80; search = "needle" }; _ }
+  | {
+      Todos.Command.request =
+        Load_page { limit = 80; offset = 0; search = "needle" };
+      _;
+    }
     :: _ ->
       ()
   | _ -> failf "search change should dispatch a bounded DB search query"
@@ -643,6 +705,7 @@ let () =
   test_mobile_edit_sheet_save_updates_title ();
   test_mobile_loads_more_when_bottom_sentinel_appears ();
   test_mobile_runtime_backed_load_more_loads_next_window ();
+  test_mobile_runtime_backed_load_more_keeps_rendered_rows_capped ();
   test_component_initial_load_uses_bounded_window_only ();
   test_search_change_dispatches_bounded_db_query ();
   test_mobile_search_queries_full_runtime_dataset ();

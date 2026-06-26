@@ -142,8 +142,16 @@ module Store = struct
         let right_key = (right.created_at_ms, right.id) in
         compare left_key right_key)
 
-  let window_of_seq ~limit seq =
+  let page_of_seq ~limit ~offset seq =
     let limit = max 0 limit in
+    let offset = max 0 offset in
+    let rec drop remaining seq =
+      if remaining = 0 then seq
+      else
+        match seq () with
+        | Seq.Nil -> Seq.empty
+        | Cons (_, seq) -> drop (remaining - 1) seq
+    in
     let rec take remaining seq acc =
       if remaining = 0 then List.rev acc
       else
@@ -151,22 +159,22 @@ module Store = struct
         | Seq.Nil -> List.rev acc
         | Cons (value, seq) -> take (remaining - 1) seq (value :: acc)
     in
-    let rows = take (limit + 1) seq [] in
+    let rows = take (limit + 1) (drop offset seq) [] in
     let todos = take limit (List.to_seq rows) [] in
     let has_more = List.length rows > limit in
     (todos, has_more)
 
-  let list_window db ~limit =
+  let list_page db ~limit ~offset =
     Ds.datoms db Aevt ~a:attr_created_at_ms ()
     |> Seq.filter_map (fun datom -> Ds.entity db (Entity_id datom.Ds.e))
     |> Seq.filter_map todo_of_entity
-    |> window_of_seq ~limit
+    |> page_of_seq ~limit ~offset
 
   let normalized value = value |> String.strip |> String.lowercase
 
-  let title_search_window db ~limit ~search =
+  let title_search_page db ~limit ~offset ~search =
     let search = normalized search in
-    if String.is_empty search then list_window db ~limit
+    if String.is_empty search then list_page db ~limit ~offset
     else
       Ds.datoms db Aevt ~a:attr_title ()
       |> Seq.filter_map (fun datom ->
@@ -177,23 +185,29 @@ module Store = struct
           | _ -> None)
       |> Seq.filter_map (fun entity_id -> Ds.entity db (Entity_id entity_id))
       |> Seq.filter_map todo_of_entity
-      |> window_of_seq ~limit
+      |> page_of_seq ~limit ~offset
 end
 
 module Command = struct
   type target = Background
-  type window = { limit : int; search : string }
-  type request = Load_window of window | Persist of Store_write.t
+  type page = { limit : int; offset : int; search : string }
+  type request = Load_page of page | Persist of Store_write.t
   type t = { target : target; request : request }
 end
 
 module Action = struct
   type new_todo = { id : string; created_at_ms : int }
-  type loaded_window = { todos : Todo.t list; has_more : bool }
+
+  type loaded_page = {
+    todos : Todo.t list;
+    has_more : bool;
+    offset : int;
+    search : string;
+  }
 
   type t =
-    | Load_window of Command.window
-    | Loaded_window of loaded_window
+    | Load_page of Command.page
+    | Loaded_page of loaded_page
     | Store_failed of string
     | Persisted of Store_write.t
     | Set_draft of string
@@ -207,6 +221,8 @@ module Model = struct
   type t = {
     draft : string;
     todos : Todo.t list;
+    loaded_count : int;
+    current_search : string;
     has_more : bool;
     is_loading : bool;
     error : string option;
@@ -216,10 +232,25 @@ module Model = struct
     {
       draft = "";
       todos = [];
+      loaded_count = 0;
+      current_search = "";
       has_more = false;
       is_loading = false;
       error = None;
     }
+
+  let max_model_todos = 240
+
+  let keep_recent_todos todos =
+    let extra = List.length todos - max_model_todos in
+    if extra <= 0 then todos
+    else
+      let rec drop remaining todos =
+        match (remaining, todos) with
+        | 0, todos | _, ([] as todos) -> todos
+        | remaining, _ :: todos -> drop (remaining - 1) todos
+      in
+      drop extra todos
 
   let background request : Command.t = { target = Background; request }
 
@@ -244,11 +275,31 @@ module Model = struct
 
   let update model (action : Action.t) =
     match action with
-    | Action.Load_window ({ Command.limit; _ } as window) ->
+    | Action.Load_page ({ Command.limit; offset; _ } as page) ->
         ( { model with is_loading = true; error = None },
-          [ background (Load_window { window with limit = max 0 limit }) ] )
-    | Action.Loaded_window { todos; has_more } ->
-        ({ model with todos; has_more; is_loading = false; error = None }, [])
+          [
+            background
+              (Load_page
+                 { page with limit = max 0 limit; offset = max 0 offset });
+          ] )
+    | Action.Loaded_page { todos; has_more; offset; search } ->
+        let page_count = List.length todos in
+        let todos =
+          if offset = 0 || not (String.equal search model.current_search) then
+            todos
+          else model.todos @ todos
+        in
+        let loaded_count = max 0 offset + page_count in
+        ( {
+            model with
+            todos = keep_recent_todos todos;
+            loaded_count;
+            current_search = search;
+            has_more;
+            is_loading = false;
+            error = None;
+          },
+          [] )
     | Action.Persisted _write -> (model, [])
     | Action.Store_failed error ->
         ({ model with is_loading = false; error = Some error }, [])
@@ -262,7 +313,9 @@ module Model = struct
               model with
               draft = "";
               error = None;
-              todos = apply_write_to_todos model.todos (Add todo);
+              todos =
+                apply_write_to_todos model.todos (Add todo) |> keep_recent_todos;
+              loaded_count = model.loaded_count + 1;
             },
             [ background (Persist (Add todo)) ] )
     | Action.Update_title { id } ->
@@ -274,7 +327,8 @@ module Model = struct
               draft = "";
               error = None;
               todos =
-                apply_write_to_todos model.todos (Update_title { id; title });
+                apply_write_to_todos model.todos (Update_title { id; title })
+                |> keep_recent_todos;
             },
             [ background (Persist (Update_title { id; title })) ] )
     | Action.Toggle id ->

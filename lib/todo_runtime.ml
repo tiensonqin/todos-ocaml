@@ -65,11 +65,11 @@ module Runtime = struct
   let execute_command_with_session session (command : Command.t) =
     with_session session ~f:(fun store ->
         match command.request with
-        | Load_window { limit; search } ->
+        | Load_page { limit; offset; search } ->
             let todos, has_more =
-              Store.title_search_window store ~limit ~search
+              Store.title_search_page store ~limit ~offset ~search
             in
-            Action.Loaded_window { todos; has_more }
+            Action.Loaded_page { todos; has_more; offset; search }
         | Persist write ->
             let store = Store.apply_write store write in
             session.store := store;
@@ -86,7 +86,7 @@ module Runtime = struct
 
   let run_command ~path ~dispatch command =
     match command.Command.request with
-    | Load_window _ | Persist _ ->
+    | Load_page _ | Persist _ ->
         Bonsai_native.Action.of_thunk (fun () ->
             let run () = dispatch (action ~path command ()) () in
             ignore (Thread.create run ()))

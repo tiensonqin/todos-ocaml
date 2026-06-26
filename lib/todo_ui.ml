@@ -27,6 +27,7 @@ let add_tab = "add"
 let search_tab = "search"
 let initial_visible_todo_limit = 80
 let visible_todo_limit_step = 80
+let max_visible_todo_limit = 240
 
 let default_controls =
   {
@@ -50,7 +51,7 @@ let next_todo = Screen.next_todo
 
 type visible_todo_item =
   | Todo_item of Todos.Todo.t
-  | Load_more_item of { total_count : int; next_limit : int }
+  | Load_more_item of { next_offset : int }
 
 let take values ~count =
   let rec loop remaining values acc =
@@ -157,26 +158,31 @@ let sidebar ~route ~set_route =
 
 let visible_todo_item_key = function
   | Todo_item todo -> todo.Todos.Todo.id
-  | Load_more_item { next_limit; _ } -> Printf.sprintf "load-more-%d" next_limit
+  | Load_more_item { next_offset } -> Printf.sprintf "load-more-%d" next_offset
 
-let load_window ~limit ~search = Todos.Action.Load_window { limit; search }
+let load_page ~limit ~offset ~search =
+  Todos.Action.Load_page { limit; offset; search }
 
 let change_search controls ~dispatch search =
   Apple.Action.many
     [
       controls.set_search search;
       controls.set_visible_todo_limit initial_visible_todo_limit;
-      dispatch (load_window ~limit:initial_visible_todo_limit ~search);
+      dispatch (load_page ~limit:initial_visible_todo_limit ~offset:0 ~search);
     ]
 
-let load_more_row controls ~next_limit ~dispatch =
+let load_more_row controls ~next_offset ~dispatch =
   Apple.text ~color:Secondary "Loading more..."
   |> Apple.on_appear
        ~on_appear:
          (Apple.Action.many
             [
-              controls.set_visible_todo_limit next_limit;
-              dispatch (load_window ~limit:next_limit ~search:controls.search);
+              controls.set_visible_todo_limit
+                (min max_visible_todo_limit
+                   (controls.visible_todo_limit + visible_todo_limit_step));
+              dispatch
+                (load_page ~limit:visible_todo_limit_step ~offset:next_offset
+                   ~search:controls.search);
             ])
 
 let content_list ?on_edit model controls ~route ~search ~set_selected_todo_id
@@ -190,23 +196,21 @@ let content_list ?on_edit model controls ~route ~search ~set_selected_todo_id
       let has_more =
         model.Todos.Model.has_more || total_count > controls.visible_todo_limit
       in
-      let next_limit =
-        if has_more then controls.visible_todo_limit + visible_todo_limit_step
-        else
-          min total_count (controls.visible_todo_limit + visible_todo_limit_step)
+      let next_offset =
+        if model.Todos.Model.loaded_count > 0 then model.loaded_count
+        else controls.visible_todo_limit
       in
       let rows =
         List.map todos ~f:(fun todo -> Todo_item todo)
-        @
-        if has_more then [ Load_more_item { total_count; next_limit } ] else []
+        @ if has_more then [ Load_more_item { next_offset } ] else []
       in
       Apple.vstack ~spacing:8.
         [
           Apple.list rows ~key:visible_todo_item_key ~row:(function
             | Todo_item todo ->
                 todo_row ~dispatch ~on_select:set_selected_todo_id ?on_edit todo
-            | Load_more_item { next_limit; _ } ->
-                load_more_row controls ~next_limit ~dispatch);
+            | Load_more_item { next_offset } ->
+                load_more_row controls ~next_offset ~dispatch);
         ]
 
 let route_content model controls ~route ~dispatch =
@@ -382,7 +386,7 @@ let split_view model controls ~dispatch =
          Apple.toolbar_item ~id:"reload" ~title:"Reload"
            ~on_click:
              (dispatch
-                (load_window ~limit:controls.visible_todo_limit
+                (load_page ~limit:controls.visible_todo_limit ~offset:0
                    ~search:controls.search))
            ();
        ]
@@ -473,7 +477,9 @@ let component_with_view ?(run_command = Todos.Controller.ignore_command) render
   let (_ : unit) =
     Bonsai_native.Graph.subscribe graph ~key:"todos-query-lifecycle" ~default:()
       (fun ~emit:_ ->
-        controller.dispatch (load_window ~limit:visible_todo_limit ~search) ();
+        controller.dispatch
+          (load_page ~limit:visible_todo_limit ~offset:0 ~search)
+          ();
         fun () -> ())
   in
   render controller

@@ -40,21 +40,21 @@ let require_todos actual expected =
 let test_load_window_schedules_bounded_background_query () =
   let model, commands =
     Todos.Model.update Todos.Model.initial
-      (Todos.Action.Load_window { limit = 80; search = "" })
+      (Todos.Action.Load_page { limit = 80; offset = 0; search = "" })
   in
   require_equal_bool model.is_loading true;
   match require_one_background_command commands with
-  | Load_window { limit = 80; search = "" } -> ()
-  | Load_window _ | Persist _ -> fail "window load must issue a bounded query"
+  | Load_page { limit = 80; offset = 0; search = "" } -> ()
+  | Load_page _ | Persist _ -> fail "page load must issue a bounded query"
 
 let test_load_window_includes_search_text_for_db_query () =
   let _model, commands =
     Todos.Model.update Todos.Model.initial
-      (Todos.Action.Load_window { limit = 80; search = "needle" })
+      (Todos.Action.Load_page { limit = 80; offset = 0; search = "needle" })
   in
   match require_one_background_command commands with
-  | Load_window { limit = 80; search = "needle" } -> ()
-  | Load_window _ | Persist _ -> fail "window load must preserve search text"
+  | Load_page { limit = 80; offset = 0; search = "needle" } -> ()
+  | Load_page _ | Persist _ -> fail "page load must preserve search text"
 
 let test_submit_trims_and_schedules_background_write () =
   let model =
@@ -74,7 +74,7 @@ let test_submit_trims_and_schedules_background_write () =
       require_todo new_todo
         (todo ~id:"todo-1" ~title:"Ship cross-platform todos" ~created_at_ms:42
            ())
-  | Load_window _ | Persist _ -> fail "submit must issue an add write"
+  | Load_page _ | Persist _ -> fail "submit must issue an add write"
 
 let test_blank_submit_is_ignored () =
   let model = { Todos.Model.initial with draft = "   " } in
@@ -89,7 +89,8 @@ let test_toggle_and_delete_schedule_background_writes () =
   let existing = todo ~id:"todo-1" ~title:"Write tests" ~created_at_ms:10 () in
   let model, _ =
     Todos.Model.update Todos.Model.initial
-      (Todos.Action.Loaded_window { todos = [ existing ]; has_more = false })
+      (Todos.Action.Loaded_page
+         { todos = [ existing ]; has_more = false; offset = 0; search = "" })
   in
   let toggled_model, toggle_commands =
     Todos.Model.update model (Todos.Action.Toggle "todo-1")
@@ -137,7 +138,8 @@ let test_loaded_and_failed_update_controller_state () =
   in
   let model, commands =
     Todos.Model.update Todos.Model.initial
-      (Todos.Action.Loaded_window { todos = loaded; has_more = false })
+      (Todos.Action.Loaded_page
+         { todos = loaded; has_more = false; offset = 0; search = "" })
   in
   require_no_commands commands;
   require_equal_bool model.is_loading false;
@@ -148,6 +150,35 @@ let test_loaded_and_failed_update_controller_state () =
   require_no_commands commands;
   require_equal_bool model.is_loading false;
   require_equal_string (Option.value_exn model.error) "sqlite failed"
+
+let test_loaded_pages_append_and_cap_model_rows () =
+  let page offset =
+    Stdlib.List.init 80 (fun index ->
+        let created_at_ms = offset + index + 1 in
+        todo
+          ~id:(Printf.sprintf "todo-%05d" created_at_ms)
+          ~title:(Printf.sprintf "Task %05d" created_at_ms)
+          ~created_at_ms ())
+  in
+  let rec load_pages model offset =
+    if offset > 320 then model
+    else
+      let model, commands =
+        Todos.Model.update model
+          (Todos.Action.Loaded_page
+             { todos = page offset; has_more = true; offset; search = "" })
+      in
+      require_no_commands commands;
+      load_pages model (offset + 80)
+  in
+  let model = load_pages Todos.Model.initial 0 in
+  require_equal_int (List.length model.todos) 240;
+  (match model.todos with
+  | first :: _ ->
+      require_todo first
+        (todo ~id:"todo-00161" ~title:"Task 00161" ~created_at_ms:161 ())
+  | [] -> fail "model should keep recent todos");
+  require_equal_int model.loaded_count 400
 
 let test_datascript_store_roundtrip () =
   let open Todos.Store in
@@ -271,10 +302,10 @@ let test_runtime_executes_commands_against_sqlite () =
      Todos.Runtime.execute_command ~path:db_path
        {
          Todos.Command.target = Background;
-         request = Load_window { limit = 80; search = "" };
+         request = Load_page { limit = 80; offset = 0; search = "" };
        }
    with
-  | Loaded_window { todos = [ actual ]; has_more = false } ->
+  | Loaded_page { todos = [ actual ]; has_more = false; _ } ->
       require_todo actual todo
   | _ -> fail "unexpected action");
   Stdlib.Sys.remove db_path
@@ -299,10 +330,10 @@ let test_runtime_executes_bounded_window_against_sqlite () =
      Todos.Runtime.execute_command ~path:db_path
        {
          Todos.Command.target = Background;
-         request = Load_window { limit = 2; search = "" };
+         request = Load_page { limit = 2; offset = 0; search = "" };
        }
    with
-  | Loaded_window { todos = [ first; second ]; has_more = true } ->
+  | Loaded_page { todos = [ first; second ]; has_more = true; _ } ->
       require_todo first (List.nth_exn todos 0);
       require_todo second (List.nth_exn todos 1)
   | _ -> fail "unexpected action");
@@ -333,10 +364,10 @@ let test_runtime_searches_full_db_by_title_window () =
      Todos.Runtime.execute_command ~path:db_path
        {
          Todos.Command.target = Background;
-         request = Load_window { limit = 80; search = "needle" };
+         request = Load_page { limit = 80; offset = 0; search = "needle" };
        }
    with
-  | Loaded_window { todos = [ actual ]; has_more = false } ->
+  | Loaded_page { todos = [ actual ]; has_more = false; _ } ->
       require_todo actual
         (todo ~id:"todo-00199" ~title:"Needle from title index"
            ~created_at_ms:199 ())
@@ -369,10 +400,10 @@ let test_runtime_persist_ack_does_not_reload_all_todos () =
      Todos.Runtime.execute_command ~path:db_path
        {
          Todos.Command.target = Background;
-         request = Load_window { limit = 80; search = "" };
+         request = Load_page { limit = 80; offset = 0; search = "" };
        }
    with
-  | Loaded_window { todos = [ actual_first; actual_second ]; has_more = false }
+  | Loaded_page { todos = [ actual_first; actual_second ]; has_more = false; _ }
     ->
       require_todo actual_first
         (todo ~id:"todo-1" ~title:"First" ~completed:true ~created_at_ms:1 ());
@@ -396,9 +427,9 @@ let test_default_db_path_uses_app_home_documents () =
 
 let () =
   [
-    ( "load window schedules bounded background query",
+    ( "load page schedules bounded background query",
       test_load_window_schedules_bounded_background_query );
-    ( "load window includes search text for DB query",
+    ( "load page includes search text for DB query",
       test_load_window_includes_search_text_for_db_query );
     ( "submit trims and writes in background",
       test_submit_trims_and_schedules_background_write );
@@ -409,6 +440,8 @@ let () =
       test_update_title_trims_and_schedules_background_write );
     ( "loaded and failed update controller state",
       test_loaded_and_failed_update_controller_state );
+    ( "loaded pages append and cap model rows",
+      test_loaded_pages_append_and_cap_model_rows );
     ("DataScript store roundtrip", test_datascript_store_roundtrip);
     ( "DataScript store keeps created order after toggle",
       test_datascript_store_keeps_created_order_after_toggle );
@@ -419,7 +452,7 @@ let () =
     ("SQLite storage roundtrip", test_sqlite_storage_roundtrip);
     ( "Runtime executes commands against SQLite",
       test_runtime_executes_commands_against_sqlite );
-    ( "Runtime executes bounded window against SQLite",
+    ( "Runtime executes bounded page against SQLite",
       test_runtime_executes_bounded_window_against_sqlite );
     ( "Runtime searches full DB by title window",
       test_runtime_searches_full_db_by_title_window );
