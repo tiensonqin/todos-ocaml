@@ -13,29 +13,20 @@ let dispatch_on_main ~dispatch action =
 let run_todos_command ~path ~dispatch (command : Todos.Command.t) =
   Swiftui.Apple.Action.of_thunk (fun () ->
       match command.request with
-      | Subscribe_query { id; query } ->
-          let is_initial = ref true in
-          let handle_initial action = dispatch action () in
-          (try
-             Todos.Runtime.subscribe_query ~path ~id ~query
-               ~on_change:(fun action ->
-                 if !is_initial then (
-                   is_initial := false;
-                   handle_initial action)
-                 else dispatch_on_main ~dispatch action)
-           with exn ->
-             handle_initial (Todos.Action.Store_failed (Exn.to_string exn)));
-          ()
-      | Unsubscribe_query id ->
-          Todos.Runtime.unsubscribe_query ~path ~id;
-          ()
-      | Load_all | Persist _ ->
+      | Load_window _ ->
           let run () =
-            let result =
-              Todos.Runtime.execute_command ~notify_subscribers:false ~path
-                command
-            in
+            let result = Todos.Runtime.execute_command ~path command in
             dispatch_on_main ~dispatch result
+          in
+          ignore (Thread.create run ())
+      | Persist _ ->
+          let run () =
+            match Todos.Runtime.execute_command ~path command with
+            | Store_failed _ as result -> dispatch_on_main ~dispatch result
+            | Loaded_window _ | Persisted _ -> ()
+            | Load_window _ | Set_draft _ | Submit_new _ | Update_title _
+            | Toggle _ | Delete _ ->
+                ()
           in
           ignore (Thread.create run ()))
 

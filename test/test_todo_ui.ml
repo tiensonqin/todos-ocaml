@@ -82,22 +82,7 @@ let render_adaptive ?(controls = Todo_ui.default_controls) model =
   in
   Backend.show (Renderer.view mounted)
 
-let store_of_todos todos =
-  todos
-  |> List.fold ~init:(Todos.Store.empty ()) ~f:(fun store todo ->
-      Todos.Store.apply_write store (Add todo))
-
-let apply_command_to_model model (command : Todos.Command.t) =
-  match command.request with
-  | Persist write ->
-      let store = store_of_todos model.Todos.Model.todos in
-      {
-        model with
-        todos = Todos.Store.apply_write store write |> Todos.Store.list;
-      }
-  | Load_all | Subscribe_query _ | Unsubscribe_query _ -> model
-
-let interactive_mobile_app initial_model =
+let interactive_mobile_app ?(dispatched_commands = ref []) initial_model =
   Backend.reset ();
   let component graph =
     let model, set_model = Apple.state graph ~key:"model" initial_model in
@@ -123,9 +108,8 @@ let interactive_mobile_app initial_model =
     in
     let dispatch action () =
       let next_model, commands = Todos.Model.update model action in
-      let next_model =
-        List.fold commands ~init:next_model ~f:apply_command_to_model
-      in
+      List.iter commands ~f:(fun command ->
+          dispatched_commands := command :: !dispatched_commands);
       set_model next_model ()
     in
     Todo_ui.mobile_view { model; dispatch }
@@ -152,6 +136,97 @@ let interactive_mobile_app initial_model =
   match App.view app with
   | Some root -> root
   | None -> failwith "app did not render"
+
+let take values ~count =
+  let rec loop remaining values acc =
+    match (remaining, values) with
+    | 0, _ | _, [] -> List.rev acc
+    | remaining, value :: values -> loop (remaining - 1) values (value :: acc)
+  in
+  if count <= 0 then [] else loop count values []
+
+let runtime_backed_mobile_app all_todos =
+  Backend.reset ();
+  let dispatched_commands = ref [] in
+  let run_command ~dispatch command () =
+    dispatched_commands := command :: !dispatched_commands;
+    match command.Todos.Command.request with
+    | Load_window { limit; search } ->
+        let search = String.strip search |> String.lowercase in
+        let source =
+          if String.is_empty search then all_todos
+          else
+            List.filter all_todos ~f:(fun todo ->
+                String.is_substring
+                  (String.lowercase todo.Todos.Todo.title)
+                  ~substring:search)
+        in
+        dispatch
+          (Todos.Action.Loaded_window
+             {
+               todos = take source ~count:limit;
+               has_more = List.length source > limit;
+             })
+          ()
+    | Persist _ -> ()
+  in
+  let component graph =
+    let controller = Todos.Controller.component ~run_command graph in
+    let route, set_route =
+      Apple.state graph ~key:"route" Todos.Screen.Route.All
+    in
+    let search, set_search = Apple.state graph ~key:"search" "" in
+    let selected_todo_id, set_selected_todo_id =
+      Apple.state graph ~key:"selected-todo-id" ""
+    in
+    let mobile_tab, set_mobile_tab =
+      Apple.state graph ~key:"mobile-tab" "today"
+    in
+    let mobile_new_task_presented, set_mobile_new_task_presented =
+      Apple.state graph ~key:"mobile-new-task-presented" false
+    in
+    let editing_todo_id, set_editing_todo_id =
+      Apple.state graph ~key:"editing-todo-id" ""
+    in
+    let visible_todo_limit, set_visible_todo_limit =
+      Apple.state graph ~key:"visible-todo-limit"
+        Todo_ui.default_controls.visible_todo_limit
+    in
+    let (_ : unit) =
+      Bonsai_native.Graph.subscribe graph ~key:"todos-query-lifecycle"
+        ~default:() (fun ~emit:_ ->
+          controller.dispatch
+            (Todos.Action.Load_window { limit = visible_todo_limit; search })
+            ();
+          fun () -> ())
+    in
+    Todo_ui.mobile_view controller
+      ~controls:
+        {
+          route;
+          search;
+          selected_todo_id;
+          mobile_tab;
+          mobile_new_task_presented;
+          editing_todo_id;
+          visible_todo_limit;
+          set_route;
+          set_search;
+          set_selected_todo_id;
+          set_mobile_tab;
+          set_mobile_new_task_presented;
+          set_editing_todo_id;
+          set_visible_todo_limit;
+        }
+  in
+  let app = App.create component in
+  App.flush_and_render app;
+  let root =
+    match App.view app with
+    | Some root -> root
+    | None -> failwith "app did not render"
+  in
+  (root, dispatched_commands)
 
 let test_empty_model_renders_split_view_composer_and_search () =
   let output = render Todos.Model.initial in
@@ -298,6 +373,7 @@ let test_mobile_edit_sheet_save_updates_title () =
   assert_not_contains "old title replaced" output ~substring:"Editable task"
 
 let test_mobile_loads_more_when_bottom_sentinel_appears () =
+  let dispatched_commands = ref [] in
   let todos =
     Stdlib.List.init 200 (fun index ->
         let created_at_ms = index + 1 in
@@ -306,14 +382,133 @@ let test_mobile_loads_more_when_bottom_sentinel_appears () =
           ~title:(Printf.sprintf "Task %05d" created_at_ms)
           ~created_at_ms ())
   in
-  let root = interactive_mobile_app { Todos.Model.initial with todos } in
+  let root =
+    interactive_mobile_app ~dispatched_commands
+      { Todos.Model.initial with todos }
+  in
   assert_occurrences "initial rows" (Backend.show root) ~substring:"list-row#"
     ~count:80;
   Backend.appear_exn root ~path:[ 0; 1; 0; 80 ];
+  (match !dispatched_commands with
+  | { Todos.Command.request = Load_window { limit = 160; search = "" }; _ } :: _
+    ->
+      ()
+  | _ -> failf "load-more should dispatch Load_window 160");
   let output = Backend.show root in
   assert_contains "newly visible page" output ~substring:"Task 00160";
   assert_occurrences "rows after sentinel appears" output ~substring:"list-row#"
     ~count:160
+
+let test_mobile_runtime_backed_load_more_loads_next_window () =
+  let all_todos =
+    Stdlib.List.init 10_000 (fun index ->
+        let created_at_ms = index + 1 in
+        todo
+          ~id:(Printf.sprintf "todo-%05d" created_at_ms)
+          ~title:(Printf.sprintf "Task %05d" created_at_ms)
+          ~created_at_ms ())
+  in
+  let root, dispatched_commands = runtime_backed_mobile_app all_todos in
+  let initial_output = Backend.show root in
+  assert_contains "initial window last task" initial_output
+    ~substring:"Task 00080";
+  assert_contains "initial sentinel is keyed by next window" initial_output
+    ~substring:"key=load-more-160";
+  assert_not_contains "initial window excludes next page" initial_output
+    ~substring:"Task 00081";
+  assert_occurrences "initial runtime-backed rows" initial_output
+    ~substring:"list-row#" ~count:80;
+  Backend.appear_exn root ~path:[ 0; 1; 0; 80 ];
+  (match !dispatched_commands with
+  | { Todos.Command.request = Load_window { limit = 160; search = "" }; _ } :: _
+    ->
+      ()
+  | _ -> failf "runtime-backed load-more should request Load_window 160");
+  let output = Backend.show root in
+  assert_contains "loaded next window" output ~substring:"Task 00160";
+  assert_contains "next sentinel is remounted for the following window" output
+    ~substring:"key=load-more-240";
+  assert_not_contains "does not render beyond requested window" output
+    ~substring:"Task 00161";
+  assert_not_contains "never renders full dataset" output
+    ~substring:"Task 10000";
+  assert_occurrences "runtime-backed rows after load-more" output
+    ~substring:"list-row#" ~count:160;
+  Backend.appear_exn root ~path:[ 0; 1; 0; 160 ];
+  (match !dispatched_commands with
+  | { Todos.Command.request = Load_window { limit = 240; search = "" }; _ } :: _
+    ->
+      ()
+  | _ -> failf "second runtime-backed load-more should request Load_window 240");
+  let output = Backend.show root in
+  assert_contains "loaded third window" output ~substring:"Task 00240";
+  assert_contains "third sentinel is remounted for the following window" output
+    ~substring:"key=load-more-320";
+  assert_not_contains "third window stays bounded" output
+    ~substring:"Task 00241";
+  assert_occurrences "runtime-backed rows after second load-more" output
+    ~substring:"list-row#" ~count:240
+
+let test_component_initial_load_uses_bounded_window_only () =
+  Backend.reset ();
+  let commands = ref [] in
+  let run_command ~dispatch:_ command () = commands := command :: !commands in
+  let app = App.create (Todo_ui.adaptive_component ~run_command) in
+  App.flush_and_render app;
+  match !commands with
+  | [ { Todos.Command.request = Load_window { limit; search = "" }; _ } ]
+    when limit = Todo_ui.default_controls.visible_todo_limit ->
+      ()
+  | commands ->
+      let rendered =
+        commands
+        |> List.map ~f:(fun command ->
+            match command.Todos.Command.request with
+            | Load_window { limit; search } ->
+                Printf.sprintf "Load_window %d search=%S" limit search
+            | Persist _ -> "Persist")
+        |> Stdlib.String.concat ", "
+      in
+      failf "initial load should only use a bounded window, got: %s" rendered
+
+let test_search_change_dispatches_bounded_db_query () =
+  Backend.reset ();
+  let commands = ref [] in
+  let run_command ~dispatch:_ command () = commands := command :: !commands in
+  let app = App.create (Todo_ui.component ~run_command) in
+  App.flush_and_render app;
+  let root =
+    match App.view app with
+    | Some root -> root
+    | None -> failwith "app did not render"
+  in
+  Backend.change_search_exn root ~path:[] ~text:"needle";
+  match !commands with
+  | { Todos.Command.request = Load_window { limit = 80; search = "needle" }; _ }
+    :: _ ->
+      ()
+  | _ -> failf "search change should dispatch a bounded DB search query"
+
+let test_mobile_search_queries_full_runtime_dataset () =
+  let all_todos =
+    Stdlib.List.init 10_000 (fun index ->
+        let created_at_ms = index + 1 in
+        let title =
+          if created_at_ms = 9_999 then "Needle from title index"
+          else Printf.sprintf "Task %05d" created_at_ms
+        in
+        todo
+          ~id:(Printf.sprintf "todo-%05d" created_at_ms)
+          ~title ~created_at_ms ())
+  in
+  let root, _dispatched_commands = runtime_backed_mobile_app all_todos in
+  Backend.select_tab_exn root ~id:"search";
+  Backend.change_search_exn root ~path:[ 3 ] ~text:"needle";
+  let output = Backend.show root in
+  assert_contains "search result outside initial app state" output
+    ~substring:"Needle from title index";
+  assert_not_contains "search does not keep first window" output
+    ~substring:"Task 00001"
 
 let test_mobile_edit_action_opens_editor_sheet () =
   Backend.reset ();
@@ -447,6 +642,10 @@ let () =
   test_mobile_large_dataset_toggles_first_visible_row_in_place ();
   test_mobile_edit_sheet_save_updates_title ();
   test_mobile_loads_more_when_bottom_sentinel_appears ();
+  test_mobile_runtime_backed_load_more_loads_next_window ();
+  test_component_initial_load_uses_bounded_window_only ();
+  test_search_change_dispatches_bounded_db_query ();
+  test_mobile_search_queries_full_runtime_dataset ();
   test_mobile_edit_action_opens_editor_sheet ();
   test_mobile_edit_flow_uses_sheet_editor ();
   test_mobile_add_flow_uses_sheet_editor ();

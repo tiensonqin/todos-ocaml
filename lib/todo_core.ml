@@ -49,7 +49,7 @@ module Store = struct
   let schema : Ds.schema =
     [
       (attr_id, schema_attr ~unique:Identity ~value_type:StringType ());
-      (attr_title, schema_attr ~value_type:StringType ());
+      (attr_title, schema_attr ~indexed:true ~value_type:StringType ());
       (attr_completed, schema_attr ());
       (attr_created_at_ms, schema_attr ~indexed:true ~value_type:NumberType ());
     ]
@@ -141,60 +141,115 @@ module Store = struct
         let left_key = (left.created_at_ms, left.id) in
         let right_key = (right.created_at_ms, right.id) in
         compare left_key right_key)
-end
 
-module Query = struct
-  type t = List_todos
+  let window_of_seq ~limit seq =
+    let limit = max 0 limit in
+    let rec take remaining seq acc =
+      if remaining = 0 then List.rev acc
+      else
+        match seq () with
+        | Seq.Nil -> List.rev acc
+        | Cons (value, seq) -> take (remaining - 1) seq (value :: acc)
+    in
+    let rows = take (limit + 1) seq [] in
+    let todos = take limit (List.to_seq rows) [] in
+    let has_more = List.length rows > limit in
+    (todos, has_more)
 
-  let equal left right =
-    match (left, right) with List_todos, List_todos -> true
+  let list_window db ~limit =
+    Ds.datoms db Aevt ~a:attr_created_at_ms ()
+    |> Seq.filter_map (fun datom -> Ds.entity db (Entity_id datom.Ds.e))
+    |> Seq.filter_map todo_of_entity
+    |> window_of_seq ~limit
+
+  let normalized value = value |> String.strip |> String.lowercase
+
+  let title_search_window db ~limit ~search =
+    let search = normalized search in
+    if String.is_empty search then list_window db ~limit
+    else
+      Ds.datoms db Aevt ~a:attr_title ()
+      |> Seq.filter_map (fun datom ->
+          match datom.Ds.v with
+          | Ds.String title
+            when String.is_substring (normalized title) ~substring:search ->
+              Some datom.Ds.e
+          | _ -> None)
+      |> Seq.filter_map (fun entity_id -> Ds.entity db (Entity_id entity_id))
+      |> Seq.filter_map todo_of_entity
+      |> window_of_seq ~limit
 end
 
 module Command = struct
   type target = Background
-
-  type request =
-    | Load_all
-    | Persist of Store_write.t
-    | Subscribe_query of { id : string; query : Query.t }
-    | Unsubscribe_query of string
-
+  type window = { limit : int; search : string }
+  type request = Load_window of window | Persist of Store_write.t
   type t = { target : target; request : request }
 end
 
 module Action = struct
   type new_todo = { id : string; created_at_ms : int }
+  type loaded_window = { todos : Todo.t list; has_more : bool }
 
   type t =
-    | Load
-    | Loaded of Todo.t list
+    | Load_window of Command.window
+    | Loaded_window of loaded_window
     | Store_failed of string
+    | Persisted of Store_write.t
     | Set_draft of string
     | Submit_new of new_todo
     | Update_title of { id : string }
     | Toggle of string
     | Delete of string
-    | Subscribe_query of { id : string; query : Query.t }
-    | Unsubscribe_query of string
 end
 
 module Model = struct
   type t = {
     draft : string;
     todos : Todo.t list;
+    has_more : bool;
     is_loading : bool;
     error : string option;
   }
 
-  let initial = { draft = ""; todos = []; is_loading = false; error = None }
+  let initial =
+    {
+      draft = "";
+      todos = [];
+      has_more = false;
+      is_loading = false;
+      error = None;
+    }
+
   let background request : Command.t = { target = Background; request }
+
+  let apply_write_to_todos todos = function
+    | Store_write.Add todo ->
+        todos @ [ todo ]
+        |> List.sort ~compare:(fun (left : Todo.t) (right : Todo.t) ->
+            let left_key = (left.created_at_ms, left.id) in
+            let right_key = (right.created_at_ms, right.id) in
+            compare left_key right_key)
+    | Toggle id ->
+        List.map todos ~f:(fun (todo : Todo.t) ->
+            if String.equal todo.id id then
+              { todo with completed = not todo.completed }
+            else todo)
+    | Delete id ->
+        List.filter todos ~f:(fun (todo : Todo.t) ->
+            not (String.equal todo.id id))
+    | Update_title { id; title } ->
+        List.map todos ~f:(fun (todo : Todo.t) ->
+            if String.equal todo.id id then { todo with title } else todo)
 
   let update model (action : Action.t) =
     match action with
-    | Action.Load ->
-        ({ model with is_loading = true; error = None }, [ background Load_all ])
-    | Action.Loaded todos ->
-        ({ model with todos; is_loading = false; error = None }, [])
+    | Action.Load_window ({ Command.limit; _ } as window) ->
+        ( { model with is_loading = true; error = None },
+          [ background (Load_window { window with limit = max 0 limit }) ] )
+    | Action.Loaded_window { todos; has_more } ->
+        ({ model with todos; has_more; is_loading = false; error = None }, [])
+    | Action.Persisted _write -> (model, [])
     | Action.Store_failed error ->
         ({ model with is_loading = false; error = Some error }, [])
     | Action.Set_draft draft -> ({ model with draft }, [])
@@ -203,20 +258,31 @@ module Model = struct
         if String.is_empty title then (model, [])
         else
           let todo = { Todo.id; title; completed = false; created_at_ms } in
-          ( { model with draft = ""; error = None },
+          ( {
+              model with
+              draft = "";
+              error = None;
+              todos = apply_write_to_todos model.todos (Add todo);
+            },
             [ background (Persist (Add todo)) ] )
     | Action.Update_title { id } ->
         let title = String.strip model.draft in
         if String.is_empty title then (model, [])
         else
-          ( { model with draft = ""; error = None },
+          ( {
+              model with
+              draft = "";
+              error = None;
+              todos =
+                apply_write_to_todos model.todos (Update_title { id; title });
+            },
             [ background (Persist (Update_title { id; title })) ] )
-    | Action.Toggle id -> (model, [ background (Persist (Toggle id)) ])
-    | Action.Delete id -> (model, [ background (Persist (Delete id)) ])
-    | Action.Subscribe_query { id; query } ->
-        (model, [ background (Subscribe_query { id; query }) ])
-    | Action.Unsubscribe_query id ->
-        (model, [ background (Unsubscribe_query id) ])
+    | Action.Toggle id ->
+        ( { model with todos = apply_write_to_todos model.todos (Toggle id) },
+          [ background (Persist (Toggle id)) ] )
+    | Action.Delete id ->
+        ( { model with todos = apply_write_to_todos model.todos (Delete id) },
+          [ background (Persist (Delete id)) ] )
 end
 
 module Screen = struct

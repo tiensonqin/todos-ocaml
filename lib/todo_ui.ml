@@ -50,7 +50,7 @@ let next_todo = Screen.next_todo
 
 type visible_todo_item =
   | Todo_item of Todos.Todo.t
-  | Load_more_item of { total_count : int }
+  | Load_more_item of { total_count : int; next_limit : int }
 
 let take values ~count =
   let rec loop remaining values acc =
@@ -157,14 +157,27 @@ let sidebar ~route ~set_route =
 
 let visible_todo_item_key = function
   | Todo_item todo -> todo.Todos.Todo.id
-  | Load_more_item _ -> "load-more"
+  | Load_more_item { next_limit; _ } -> Printf.sprintf "load-more-%d" next_limit
 
-let load_more_row controls ~total_count =
-  let next_limit =
-    min total_count (controls.visible_todo_limit + visible_todo_limit_step)
-  in
+let load_window ~limit ~search = Todos.Action.Load_window { limit; search }
+
+let change_search controls ~dispatch search =
+  Apple.Action.many
+    [
+      controls.set_search search;
+      controls.set_visible_todo_limit initial_visible_todo_limit;
+      dispatch (load_window ~limit:initial_visible_todo_limit ~search);
+    ]
+
+let load_more_row controls ~next_limit ~dispatch =
   Apple.text ~color:Secondary "Loading more..."
-  |> Apple.on_appear ~on_appear:(controls.set_visible_todo_limit next_limit)
+  |> Apple.on_appear
+       ~on_appear:
+         (Apple.Action.many
+            [
+              controls.set_visible_todo_limit next_limit;
+              dispatch (load_window ~limit:next_limit ~search:controls.search);
+            ])
 
 let content_list ?on_edit model controls ~route ~search ~set_selected_todo_id
     ~dispatch =
@@ -174,20 +187,26 @@ let content_list ?on_edit model controls ~route ~search ~set_selected_todo_id
   | [] -> empty_state "No matching tasks"
   | todos ->
       let total_count = List.length all_todos in
+      let has_more =
+        model.Todos.Model.has_more || total_count > controls.visible_todo_limit
+      in
+      let next_limit =
+        if has_more then controls.visible_todo_limit + visible_todo_limit_step
+        else
+          min total_count (controls.visible_todo_limit + visible_todo_limit_step)
+      in
       let rows =
         List.map todos ~f:(fun todo -> Todo_item todo)
         @
-        if total_count > controls.visible_todo_limit then
-          [ Load_more_item { total_count } ]
-        else []
+        if has_more then [ Load_more_item { total_count; next_limit } ] else []
       in
       Apple.vstack ~spacing:8.
         [
           Apple.list rows ~key:visible_todo_item_key ~row:(function
             | Todo_item todo ->
                 todo_row ~dispatch ~on_select:set_selected_todo_id ?on_edit todo
-            | Load_more_item { total_count } ->
-                load_more_row controls ~total_count);
+            | Load_more_item { next_limit; _ } ->
+                load_more_row controls ~next_limit ~dispatch);
         ]
 
 let route_content model controls ~route ~dispatch =
@@ -353,14 +372,18 @@ let split_view model controls ~dispatch =
     ~sidebar:(sidebar ~route:controls.route ~set_route:controls.set_route)
     ~content:(route_content model controls ~route:controls.route ~dispatch)
     ~detail:(detail_view screen)
-  |> Apple.searchable ~text:controls.search ~on_change:controls.set_search
+  |> Apple.searchable ~text:controls.search
+       ~on_change:(change_search controls ~dispatch)
   |> Apple.toolbar
        [
          Apple.toolbar_item ~id:"add" ~title:"Add"
            ~on_click:(dispatch (Todos.Action.Submit_new (next_todo model)))
            ();
          Apple.toolbar_item ~id:"reload" ~title:"Reload"
-           ~on_click:(dispatch Todos.Action.Load)
+           ~on_click:
+             (dispatch
+                (load_window ~limit:controls.visible_todo_limit
+                   ~search:controls.search))
            ();
        ]
 
@@ -399,7 +422,7 @@ let mobile_view ?(controls = default_controls)
           (if String.equal controls.mobile_tab search_tab then
              mobile_task_screen model controls ~route:Route.All ~dispatch
              |> Apple.searchable ~text:controls.search
-                  ~on_change:controls.set_search
+                  ~on_change:(change_search controls ~dispatch)
            else Apple.vstack []);
       ]
   in
@@ -450,13 +473,8 @@ let component_with_view ?(run_command = Todos.Controller.ignore_command) render
   let (_ : unit) =
     Bonsai_native.Graph.subscribe graph ~key:"todos-query-lifecycle" ~default:()
       (fun ~emit:_ ->
-        controller.dispatch Todos.Action.Load ();
-        controller.dispatch
-          (Todos.Action.Subscribe_query
-             { id = "todos"; query = Todos.Query.List_todos })
-          ();
-        fun () ->
-          controller.dispatch (Todos.Action.Unsubscribe_query "todos") ())
+        controller.dispatch (load_window ~limit:visible_todo_limit ~search) ();
+        fun () -> ())
   in
   render controller
     ~controls:

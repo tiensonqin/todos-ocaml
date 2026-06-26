@@ -37,16 +37,24 @@ let require_todos actual expected =
   require_equal_int (List.length actual) (List.length expected);
   List.iter2_exn actual expected ~f:require_todo
 
-let test_load_schedules_background_query () =
+let test_load_window_schedules_bounded_background_query () =
   let model, commands =
-    Todos.Model.update Todos.Model.initial Todos.Action.Load
+    Todos.Model.update Todos.Model.initial
+      (Todos.Action.Load_window { limit = 80; search = "" })
   in
   require_equal_bool model.is_loading true;
-  require_equal_string (Option.value model.error ~default:"") "";
   match require_one_background_command commands with
-  | Load_all -> ()
-  | Persist _ | Subscribe_query _ | Unsubscribe_query _ ->
-      fail "load must not issue a write"
+  | Load_window { limit = 80; search = "" } -> ()
+  | Load_window _ | Persist _ -> fail "window load must issue a bounded query"
+
+let test_load_window_includes_search_text_for_db_query () =
+  let _model, commands =
+    Todos.Model.update Todos.Model.initial
+      (Todos.Action.Load_window { limit = 80; search = "needle" })
+  in
+  match require_one_background_command commands with
+  | Load_window { limit = 80; search = "needle" } -> ()
+  | Load_window _ | Persist _ -> fail "window load must preserve search text"
 
 let test_submit_trims_and_schedules_background_write () =
   let model =
@@ -57,13 +65,16 @@ let test_submit_trims_and_schedules_background_write () =
       (Todos.Action.Submit_new { id = "todo-1"; created_at_ms = 42 })
   in
   require_equal_string model.draft "";
+  require_todos model.todos
+    [
+      todo ~id:"todo-1" ~title:"Ship cross-platform todos" ~created_at_ms:42 ();
+    ];
   match require_one_background_command commands with
   | Persist (Add new_todo) ->
       require_todo new_todo
         (todo ~id:"todo-1" ~title:"Ship cross-platform todos" ~created_at_ms:42
            ())
-  | Load_all | Persist _ | Subscribe_query _ | Unsubscribe_query _ ->
-      fail "submit must issue an add write"
+  | Load_window _ | Persist _ -> fail "submit must issue an add write"
 
 let test_blank_submit_is_ignored () =
   let model = { Todos.Model.initial with draft = "   " } in
@@ -77,48 +88,45 @@ let test_blank_submit_is_ignored () =
 let test_toggle_and_delete_schedule_background_writes () =
   let existing = todo ~id:"todo-1" ~title:"Write tests" ~created_at_ms:10 () in
   let model, _ =
-    Todos.Model.update Todos.Model.initial (Todos.Action.Loaded [ existing ])
+    Todos.Model.update Todos.Model.initial
+      (Todos.Action.Loaded_window { todos = [ existing ]; has_more = false })
   in
-  let _, toggle_commands =
+  let toggled_model, toggle_commands =
     Todos.Model.update model (Todos.Action.Toggle "todo-1")
   in
+  require_todos toggled_model.todos
+    [
+      todo ~id:"todo-1" ~title:"Write tests" ~created_at_ms:10 ~completed:true
+        ();
+    ];
   (match require_one_background_command toggle_commands with
   | Persist (Toggle "todo-1") -> ()
   | _ -> fail "toggle must issue a toggle write");
-  let _, delete_commands =
+  let deleted_model, delete_commands =
     Todos.Model.update model (Todos.Action.Delete "todo-1")
   in
+  require_todos deleted_model.todos [];
   match require_one_background_command delete_commands with
   | Persist (Delete "todo-1") -> ()
   | _ -> fail "delete must issue a delete write"
 
 let test_update_title_trims_and_schedules_background_write () =
-  let model = { Todos.Model.initial with draft = "  Edited title  " } in
+  let model =
+    {
+      Todos.Model.initial with
+      draft = "  Edited title  ";
+      todos = [ todo ~id:"todo-1" ~title:"Original title" ~created_at_ms:10 () ];
+    }
+  in
   let model, commands =
     Todos.Model.update model (Todos.Action.Update_title { id = "todo-1" })
   in
   require_equal_string model.draft "";
+  require_todos model.todos
+    [ todo ~id:"todo-1" ~title:"Edited title" ~created_at_ms:10 () ];
   match require_one_background_command commands with
   | Persist (Update_title { id = "todo-1"; title = "Edited title" }) -> ()
   | _ -> fail "update title must issue an update write"
-
-let test_subscribe_and_unsubscribe_schedule_background_query_commands () =
-  let model, commands =
-    Todos.Model.update Todos.Model.initial
-      (Todos.Action.Subscribe_query
-         { id = "todos"; query = Todos.Query.List_todos })
-  in
-  require_todos model.todos [];
-  (match require_one_background_command commands with
-  | Subscribe_query { id = "todos"; query = Todos.Query.List_todos } -> ()
-  | _ -> fail "subscribe must issue a query subscription command");
-  let model, commands =
-    Todos.Model.update model (Todos.Action.Unsubscribe_query "todos")
-  in
-  require_todos model.todos [];
-  match require_one_background_command commands with
-  | Unsubscribe_query "todos" -> ()
-  | _ -> fail "unsubscribe must issue an unsubscribe command"
 
 let test_loaded_and_failed_update_controller_state () =
   let loaded =
@@ -128,7 +136,8 @@ let test_loaded_and_failed_update_controller_state () =
     ]
   in
   let model, commands =
-    Todos.Model.update Todos.Model.initial (Todos.Action.Loaded loaded)
+    Todos.Model.update Todos.Model.initial
+      (Todos.Action.Loaded_window { todos = loaded; has_more = false })
   in
   require_no_commands commands;
   require_equal_bool model.is_loading false;
@@ -256,13 +265,118 @@ let test_runtime_executes_commands_against_sqlite () =
      Todos.Runtime.execute_command ~path:db_path
        { Todos.Command.target = Background; request = Persist (Add todo) }
    with
-  | Loaded [ actual ] -> require_todo actual todo
+  | Persisted (Add actual) -> require_todo actual todo
   | _ -> fail "unexpected action");
   (match
      Todos.Runtime.execute_command ~path:db_path
-       { Todos.Command.target = Background; request = Load_all }
+       {
+         Todos.Command.target = Background;
+         request = Load_window { limit = 80; search = "" };
+       }
    with
-  | Loaded [ actual ] -> require_todo actual todo
+  | Loaded_window { todos = [ actual ]; has_more = false } ->
+      require_todo actual todo
+  | _ -> fail "unexpected action");
+  Stdlib.Sys.remove db_path
+
+let test_runtime_executes_bounded_window_against_sqlite () =
+  let db_path = Stdlib.Filename.temp_file "todos-ocaml-window" ".sqlite" in
+  Stdlib.Sys.remove db_path;
+  let todos =
+    Stdlib.List.init 3 (fun index ->
+        let created_at_ms = index + 1 in
+        todo
+          ~id:(Printf.sprintf "todo-%d" created_at_ms)
+          ~title:(Printf.sprintf "Task %d" created_at_ms)
+          ~created_at_ms ())
+  in
+  List.iter todos ~f:(fun todo ->
+      ignore
+        (Todos.Runtime.execute_command ~path:db_path
+           { Todos.Command.target = Background; request = Persist (Add todo) }
+          : Todos.Action.t));
+  (match
+     Todos.Runtime.execute_command ~path:db_path
+       {
+         Todos.Command.target = Background;
+         request = Load_window { limit = 2; search = "" };
+       }
+   with
+  | Loaded_window { todos = [ first; second ]; has_more = true } ->
+      require_todo first (List.nth_exn todos 0);
+      require_todo second (List.nth_exn todos 1)
+  | _ -> fail "unexpected action");
+  Stdlib.Sys.remove db_path
+
+let test_runtime_searches_full_db_by_title_window () =
+  let db_path = Stdlib.Filename.temp_file "todos-ocaml-search" ".sqlite" in
+  Stdlib.Sys.remove db_path;
+  for index = 1 to 200 do
+    let title =
+      if index = 199 then "Needle from title index"
+      else Printf.sprintf "Task %05d" index
+    in
+    ignore
+      (Todos.Runtime.execute_command ~path:db_path
+         {
+           Todos.Command.target = Background;
+           request =
+             Persist
+               (Add
+                  (todo
+                     ~id:(Printf.sprintf "todo-%05d" index)
+                     ~title ~created_at_ms:index ()));
+         }
+        : Todos.Action.t)
+  done;
+  (match
+     Todos.Runtime.execute_command ~path:db_path
+       {
+         Todos.Command.target = Background;
+         request = Load_window { limit = 80; search = "needle" };
+       }
+   with
+  | Loaded_window { todos = [ actual ]; has_more = false } ->
+      require_todo actual
+        (todo ~id:"todo-00199" ~title:"Needle from title index"
+           ~created_at_ms:199 ())
+  | _ -> fail "search must query matching titles outside the loaded app state");
+  Stdlib.Sys.remove db_path
+
+let test_runtime_persist_ack_does_not_reload_all_todos () =
+  let db_path = Stdlib.Filename.temp_file "todos-ocaml-runtime-ack" ".sqlite" in
+  Stdlib.Sys.remove db_path;
+  let first = todo ~id:"todo-1" ~title:"First" ~created_at_ms:1 () in
+  let second = todo ~id:"todo-2" ~title:"Second" ~created_at_ms:2 () in
+  ignore
+    (Todos.Runtime.execute_command ~path:db_path
+       { Todos.Command.target = Background; request = Persist (Add first) }
+      : Todos.Action.t);
+  ignore
+    (Todos.Runtime.execute_command ~path:db_path
+       { Todos.Command.target = Background; request = Persist (Add second) }
+      : Todos.Action.t);
+  (match
+     Todos.Runtime.execute_command ~path:db_path
+       {
+         Todos.Command.target = Background;
+         request = Persist (Toggle "todo-1");
+       }
+   with
+  | Persisted (Toggle "todo-1") -> ()
+  | _ -> fail "unexpected action");
+  (match
+     Todos.Runtime.execute_command ~path:db_path
+       {
+         Todos.Command.target = Background;
+         request = Load_window { limit = 80; search = "" };
+       }
+   with
+  | Loaded_window { todos = [ actual_first; actual_second ]; has_more = false }
+    ->
+      require_todo actual_first
+        (todo ~id:"todo-1" ~title:"First" ~completed:true ~created_at_ms:1 ());
+      require_todo actual_second second
   | _ -> fail "unexpected action");
   Stdlib.Sys.remove db_path
 
@@ -280,42 +394,12 @@ let test_default_db_path_uses_app_home_documents () =
     (Todos.Runtime.default_db_path_for_env ~getenv)
     "/custom/todos.sqlite3"
 
-let test_runtime_notifies_query_subscribers_after_write () =
-  let db_path = Stdlib.Filename.temp_file "todos-ocaml-subscribe" ".sqlite" in
-  Stdlib.Sys.remove db_path;
-  let received = ref [] in
-  Todos.Runtime.subscribe_query ~path:db_path ~id:"test"
-    ~query:Todos.Query.List_todos ~on_change:(fun action ->
-      received := action :: !received);
-  (match !received with
-  | [ Loaded [] ] -> ()
-  | _ -> fail "subscription must receive initial query result");
-  let first =
-    todo ~id:"todo-1" ~title:"Subscribed write" ~created_at_ms:700 ()
-  in
-  (match
-     Todos.Runtime.execute_command ~path:db_path
-       { Todos.Command.target = Background; request = Persist (Add first) }
-   with
-  | Loaded [ actual ] -> require_todo actual first
-  | _ -> fail "unexpected action");
-  (match !received with
-  | [ Loaded [ actual ]; Loaded [] ] -> require_todo actual first
-  | _ -> fail "subscription must receive updated query result");
-  Todos.Runtime.unsubscribe_query ~path:db_path ~id:"test";
-  let second = todo ~id:"todo-2" ~title:"No subscriber" ~created_at_ms:701 () in
-  ignore
-    (Todos.Runtime.execute_command ~path:db_path
-       { Todos.Command.target = Background; request = Persist (Add second) }
-      : Todos.Action.t);
-  (match !received with
-  | [ Loaded [ actual ]; Loaded [] ] -> require_todo actual first
-  | _ -> fail "unsubscribed query must not receive updates");
-  Stdlib.Sys.remove db_path
-
 let () =
   [
-    ("load schedules background query", test_load_schedules_background_query);
+    ( "load window schedules bounded background query",
+      test_load_window_schedules_bounded_background_query );
+    ( "load window includes search text for DB query",
+      test_load_window_includes_search_text_for_db_query );
     ( "submit trims and writes in background",
       test_submit_trims_and_schedules_background_write );
     ("blank submit is ignored", test_blank_submit_is_ignored);
@@ -323,8 +407,6 @@ let () =
       test_toggle_and_delete_schedule_background_writes );
     ( "update title trims and writes in background",
       test_update_title_trims_and_schedules_background_write );
-    ( "subscribe and unsubscribe are background query commands",
-      test_subscribe_and_unsubscribe_schedule_background_query_commands );
     ( "loaded and failed update controller state",
       test_loaded_and_failed_update_controller_state );
     ("DataScript store roundtrip", test_datascript_store_roundtrip);
@@ -337,10 +419,14 @@ let () =
     ("SQLite storage roundtrip", test_sqlite_storage_roundtrip);
     ( "Runtime executes commands against SQLite",
       test_runtime_executes_commands_against_sqlite );
+    ( "Runtime executes bounded window against SQLite",
+      test_runtime_executes_bounded_window_against_sqlite );
+    ( "Runtime searches full DB by title window",
+      test_runtime_searches_full_db_by_title_window );
+    ( "Runtime persist ack does not reload all todos",
+      test_runtime_persist_ack_does_not_reload_all_todos );
     ( "Default DB path uses app home documents",
       test_default_db_path_uses_app_home_documents );
-    ( "Runtime notifies query subscribers after write",
-      test_runtime_notifies_query_subscribers_after_write );
   ]
   |> List.iter ~f:(fun (name, test) ->
       try test ()
