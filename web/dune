@@ -5,6 +5,6 @@
  (modules todos_web todos_db_worker)
  (preprocess
   (pps melange.ppx))
- (libraries bonsai_native datascript_ocaml.melange_storage melange-transit)
+ (libraries datascript_ocaml.melange_storage melange-transit)
  (runtime_deps react_runtime.js db_worker_client.js sqlite_worker_runtime.js)
  (promote (until-clean)))

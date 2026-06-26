@@ -1,15 +1,15 @@
-module Native = Bonsai_native
-module App = Native.App
 module Transit_json = Transit.Json
 
 type renderer
 
-external create_renderer :
+external create_todo_renderer :
   string ->
   (unit -> string) ->
+  (string -> unit) ->
+  (unit -> unit) ->
   (int -> unit) ->
-  (int -> string -> unit) ->
-  renderer = "createRenderer"
+  (int -> unit) ->
+  renderer = "createTodoRenderer"
 [@@mel.module "./react_runtime.js"]
 
 external render : renderer -> unit = "render" [@@mel.send]
@@ -24,6 +24,7 @@ external post_store_message : todo_store -> string -> unit = "post" [@@mel.send]
 type todo = { id : int; title : string; completed : bool }
 
 let todos = ref []
+let draft = ref ""
 let renderer_ref : renderer option ref = ref None
 
 let todo_to_transit todo =
@@ -113,94 +114,72 @@ let next_id todos =
 let active_todos todos = List.filter (fun todo -> not todo.completed) todos
 let completed_todos todos = List.filter (fun todo -> todo.completed) todos
 
-let todo_row graph todo =
-  let toggle () =
-    let updated =
-      !todos
-      |> List.map (fun current ->
-          if current.id = todo.id then
-            { current with completed = not current.completed }
-          else current)
-    in
-    todos := updated;
-    persist_todos updated;
-    rerender ()
-  in
-  let delete () =
-    let updated =
-      !todos |> List.filter (fun current -> current.id <> todo.id)
-    in
-    todos := updated;
-    persist_todos updated;
-    rerender ()
-  in
-  Native.scope graph ~key:(string_of_int todo.id) (fun _graph ->
-      Native.hstack ~spacing:8.
-        [
-          Native.button
-            (if todo.completed then "Undo" else "Done")
-            ~on_click:toggle;
-          Native.text todo.title;
-          Native.button "Delete" ~on_click:delete;
-        ])
+let json_escape text =
+  let buffer = Buffer.create (String.length text + 8) in
+  String.iter
+    (function
+      | '"' -> Buffer.add_string buffer "\\\""
+      | '\\' -> Buffer.add_string buffer "\\\\"
+      | '\n' -> Buffer.add_string buffer "\\n"
+      | '\r' -> Buffer.add_string buffer "\\r"
+      | '\t' -> Buffer.add_string buffer "\\t"
+      | char -> Buffer.add_char buffer char)
+    text;
+  Buffer.contents buffer
 
-let todo_list graph ~title todos =
-  Native.vstack ~spacing:8.
-    [
-      Native.text title;
-      (match todos with
-      | [] -> Native.text "Nothing here right now."
-      | todos ->
-          Native.list todos
-            ~key:(fun todo -> string_of_int todo.id)
-            ~row:(todo_row graph));
-    ]
+let json_string text = "\"" ^ json_escape text ^ "\""
 
-let component graph =
-  let draft, set_draft = Native.Graph.state graph ~key:"draft" "" in
-  let next_id_state, set_next_id =
-    Native.Graph.state graph ~key:"next-id" (next_id !todos)
-  in
-  let add_todo () =
-    let title = String.trim draft in
-    if title <> "" then (
-      let next_id = max next_id_state (next_id !todos) in
-      let updated = { id = next_id; title; completed = false } :: !todos in
-      todos := updated;
-      persist_todos updated;
-      set_next_id (next_id + 1) ();
-      set_draft "" ();
-      rerender ())
-  in
+let todo_to_json todo =
+  Printf.sprintf {|{"id":%d,"title":%s,"completed":%s}|} todo.id
+    (json_string todo.title)
+    (if todo.completed then "true" else "false")
+
+let todos_to_json todos =
+  todos |> List.map todo_to_json |> String.concat "," |> Printf.sprintf "[%s]"
+
+let state_json () =
   let active = active_todos !todos in
   let completed = completed_todos !todos in
-  Native.vstack ~spacing:16.
-    [
-      Native.text "Todos";
-      Native.hstack ~spacing:8.
-        [
-          Native.text_field ~text:draft ~placeholder:"New task"
-            ~on_change:set_draft ();
-          Native.button "Add" ~on_click:add_todo;
-        ];
-      Native.text
-        (Printf.sprintf "%d active, %d completed" (List.length active)
-           (List.length completed));
-      Native.hstack ~spacing:24.
-        [
-          todo_list graph ~title:"Active" active;
-          todo_list graph ~title:"Done" completed;
-        ];
-    ]
-  |> Native.padding
+  Printf.sprintf
+    {|{"draft":%s,"activeCount":%d,"completedCount":%d,"activeTodos":%s,"completedTodos":%s}|}
+    (json_string !draft) (List.length active) (List.length completed)
+    (todos_to_json active) (todos_to_json completed)
 
-let app = App.create component
+let set_draft value =
+  draft := value;
+  rerender ()
+
+let add_todo () =
+  let title = String.trim !draft in
+  if not (String.equal title "") then (
+    let updated =
+      { id = next_id !todos; title; completed = false } :: !todos
+    in
+    todos := updated;
+    draft := "";
+    persist_todos updated;
+    rerender ())
+
+let toggle_todo id =
+  let updated =
+    !todos
+    |> List.map (fun todo ->
+           if todo.id = id then { todo with completed = not todo.completed }
+           else todo)
+  in
+  todos := updated;
+  persist_todos updated;
+  rerender ()
+
+let delete_todo id =
+  let updated = !todos |> List.filter (fun todo -> todo.id <> id) in
+  todos := updated;
+  persist_todos updated;
+  rerender ()
 
 let renderer =
-  create_renderer "app"
-    (fun () -> App.render_json app)
-    (fun event_id -> App.dispatch_click app event_id)
-    (fun event_id text -> App.dispatch_change app event_id ~text)
+  create_todo_renderer "app" state_json set_draft add_todo toggle_todo
+    delete_todo
 
 let () =
   renderer_ref := Some renderer;

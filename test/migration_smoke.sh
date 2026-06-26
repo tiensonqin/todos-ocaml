@@ -73,6 +73,11 @@ if grep -R "localStorage\\|getItem\\|setItem" web/todos_web.ml >/dev/null; then
   exit 1
 fi
 
+if rg -n "Bonsai_native|Native\\.|render_json|hstack|vstack" web/todos_web.ml web/react_runtime.js web/dune >/dev/null; then
+  echo "Web UI should render with Melange React directly, not Bonsai Native nodes" >&2
+  exit 1
+fi
+
 if ! grep -R "todos_db_worker" web/dune web/todos_web.ml >/dev/null; then
   echo "Web demo should build and start the SQLite worker" >&2
   exit 1
@@ -112,9 +117,9 @@ test -s web/dist/web/todos_web.js
 test -s web/dist/web/todos_db_worker.js
 test -s web/dist/web/react_runtime.js
 
-grep -q "createRenderer" web/dist/web/todos_web.js
-grep -q "New task" web/dist/web/todos_web.js
+grep -q "createTodoRenderer" web/dist/web/todos_web.js
 grep -q "createRoot" web/dist/web/react_runtime.js
+grep -q "New task" web/dist/web/react_runtime.js
 grep -q "Todos" web/dist/web/react_runtime.js
 grep -q "todos_db_worker" web/dist/web/db_worker_client.js
 grep -q "@sqlite.org/sqlite-wasm" web/dist/web/sqlite_worker_runtime.js

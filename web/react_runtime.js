@@ -1,110 +1,122 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 
-function modifierStyle(modifiers) {
-  const style = {};
-
-  for (const modifier of modifiers || []) {
-    if (modifier.type === "padding") {
-      style.paddingTop = modifier.top;
-      style.paddingInlineStart = modifier.start;
-      style.paddingBottom = modifier.bottom;
-      style.paddingInlineEnd = modifier.end;
-    } else if (modifier.type === "frame") {
-      if (modifier.width !== null) {
-        style.width = modifier.width;
-      }
-      if (modifier.height !== null) {
-        style.height = modifier.height;
-      }
-    }
-  }
-
-  return style;
+function TodoRow({ todo, onDelete, onToggle }) {
+  return React.createElement(
+    "li",
+    { className: `todo-row${todo.completed ? " completed" : ""}` },
+    React.createElement(
+      "button",
+      {
+        "aria-label": todo.completed ? "Mark incomplete" : "Mark complete",
+        className: "icon-button",
+        onClick: () => onToggle(todo.id),
+        type: "button",
+      },
+      todo.completed ? "✓" : "",
+    ),
+    React.createElement("span", null, todo.title),
+    React.createElement(
+      "button",
+      {
+        className: "delete-button",
+        onClick: () => onDelete(todo.id),
+        type: "button",
+      },
+      "Delete",
+    ),
+  );
 }
 
-function renderNode(node, callbacks) {
-  const style = modifierStyle(node.modifiers);
-
-  switch (node.type) {
-    case "text":
-      return React.createElement("p", { className: "text-node", style }, node.text);
-    case "button":
-      return React.createElement(
-        "button",
-        {
-          className: "button-node",
-          disabled: !node.enabled,
-          onClick: () => callbacks.click(node.eventId),
-          style,
-        },
-        node.text,
-      );
-    case "textField":
-      return React.createElement("input", {
-        className: "input-node",
-        onChange: (event) => callbacks.change(node.eventId, event.target.value),
-        placeholder: node.placeholder || "",
-        style,
-        value: node.text,
-      });
-    case "vstack":
-    case "hstack":
-      return React.createElement(
-        "div",
-        {
-          className: node.type === "hstack" ? "stack stack-row" : "stack",
-          style: { ...style, gap: node.spacing ?? 0 },
-        },
-        node.children.map((child, index) =>
-          React.createElement(React.Fragment, { key: index }, renderNode(child, callbacks)),
+function TodoColumn({ emptyText, onDelete, onToggle, title, todos }) {
+  return React.createElement(
+    "section",
+    null,
+    React.createElement("h2", null, title),
+    todos.length === 0
+      ? React.createElement("p", { className: "muted" }, emptyText)
+      : React.createElement(
+          "ul",
+          null,
+          todos.map((todo) =>
+            React.createElement(TodoRow, {
+              key: todo.id,
+              onDelete,
+              onToggle,
+              todo,
+            }),
+          ),
         ),
-      );
-    case "list":
-      return React.createElement(
+  );
+}
+
+function TodosApp({ onAdd, onDelete, onDraftChange, onToggle, state }) {
+  return React.createElement(
+    "main",
+    { className: "app-shell" },
+    React.createElement(
+      "aside",
+      { className: "sidebar" },
+      React.createElement("h1", null, "Todos"),
+      React.createElement("p", { className: "counter" }, `${state.activeCount} active`),
+      React.createElement("p", { className: "counter muted" }, `${state.completedCount} completed`),
+    ),
+    React.createElement(
+      "section",
+      { className: "workspace" },
+      React.createElement(
+        "form",
+        {
+          className: "composer",
+          onSubmit: (event) => {
+            event.preventDefault();
+            onAdd();
+          },
+        },
+        React.createElement("input", {
+          "aria-label": "New task",
+          onChange: (event) => onDraftChange(event.target.value),
+          placeholder: "New task",
+          value: state.draft,
+        }),
+        React.createElement("button", { type: "submit" }, "Add"),
+      ),
+      React.createElement(
         "div",
-        { className: "todo-list", style },
-        node.rows.map((row) =>
-          React.createElement("div", { className: "todo-row", key: row.key }, renderNode(row.node, callbacks)),
-        ),
-      );
-    case "scrollView":
-      return React.createElement("div", { className: "scroll-view", style }, renderNode(node.child, callbacks));
-    default:
-      return React.createElement("pre", { className: "unknown-node", style }, JSON.stringify(node, null, 2));
-  }
+        { className: "columns" },
+        React.createElement(TodoColumn, {
+          emptyText: "Nothing active right now.",
+          onDelete,
+          onToggle,
+          title: "Active",
+          todos: state.activeTodos,
+        }),
+        React.createElement(TodoColumn, {
+          emptyText: "Nothing completed yet.",
+          onDelete,
+          onToggle,
+          title: "Done",
+          todos: state.completedTodos,
+        }),
+      ),
+    ),
+  );
 }
 
-function TodosApp({ renderJson, dispatchClick, dispatchChange, rerender }) {
-  const tree = JSON.parse(renderJson());
-  const callbacks = {
-    click(eventId) {
-      dispatchClick(eventId);
-      rerender();
-    },
-    change(eventId, value) {
-      dispatchChange(eventId, value);
-      rerender();
-    },
-  };
-
-  return React.createElement("main", { className: "app-shell" }, renderNode(tree, callbacks));
-}
-
-export function createRenderer(rootId, renderJson, dispatchClick, dispatchChange) {
+export function createTodoRenderer(rootId, getStateJson, onDraftChange, onAdd, onToggle, onDelete) {
   const root = createRoot(document.getElementById(rootId));
-  const renderer = {
+
+  return {
     render() {
       root.render(
         React.createElement(TodosApp, {
-          dispatchChange,
-          dispatchClick,
-          renderJson,
-          rerender: () => renderer.render(),
+          onAdd,
+          onDelete,
+          onDraftChange,
+          onToggle,
+          state: JSON.parse(getStateJson()),
         }),
       );
     },
   };
-
-  return renderer;
 }
