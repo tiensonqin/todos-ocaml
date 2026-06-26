@@ -174,12 +174,15 @@ let route_content model controls ~route ~dispatch =
        ])
   |> Apple.padding
 
-let mobile_screen_padding node =
+let mobile_header node =
+  Apple.padding
+    ~insets:{ Apple.top = 28.; leading = 24.; bottom = 20.; trailing = 24. }
+    node
+
+let mobile_empty_screen node =
   Apple.padding
     ~insets:{ Apple.top = 28.; leading = 24.; bottom = 112.; trailing = 24. }
     node
-
-let mobile_scroll_screen node = Apple.scroll_view (mobile_screen_padding node)
 
 let mobile_task_screen model controls ~route ~dispatch =
   let on_edit todo =
@@ -189,9 +192,14 @@ let mobile_task_screen model controls ~route ~dispatch =
         controls.set_editing_todo_id todo.id;
       ]
   in
-  content_list model ~route ~search:controls.search
-    ~set_selected_todo_id:controls.set_selected_todo_id ~on_edit ~dispatch
-  |> mobile_scroll_screen
+  match
+    Screen.visible_todos ~route ~search:controls.search
+      model.Todos.Model.todos
+  with
+  | [] -> empty_state "No matching tasks" |> mobile_empty_screen
+  | _ ->
+      content_list model ~route ~search:controls.search
+        ~set_selected_todo_id:controls.set_selected_todo_id ~on_edit ~dispatch
 
 let mobile_dashboard model controls ~dispatch =
   let on_edit todo =
@@ -201,17 +209,28 @@ let mobile_dashboard model controls ~dispatch =
         controls.set_editing_todo_id todo.id;
       ]
   in
-  Apple.vstack ~spacing:32.
-    [
-      Apple.vstack ~spacing:4.
+  let header =
+    Apple.vstack ~spacing:4.
+      [
+        Apple.text ~style:Title2 ~weight:Semibold "Good morning";
+        Apple.text ~color:Secondary "Let's get things done.";
+      ]
+    |> mobile_header
+  in
+  match
+    Screen.visible_todos ~route:Route.All ~search:controls.search
+      model.Todos.Model.todos
+  with
+  | [] ->
+      Apple.vstack ~spacing:12.
+        [ header; empty_state "No matching tasks" |> mobile_empty_screen ]
+  | _ ->
+      Apple.vstack ~spacing:0.
         [
-          Apple.text ~style:Title2 ~weight:Semibold "Good morning";
-          Apple.text ~color:Secondary "Let's get things done.";
-        ];
-      content_list model ~route:Route.All ~search:controls.search
-        ~set_selected_todo_id:controls.set_selected_todo_id ~on_edit ~dispatch;
-    ]
-  |> mobile_scroll_screen
+          header;
+          content_list model ~route:Route.All ~search:controls.search
+            ~set_selected_todo_id:controls.set_selected_todo_id ~on_edit ~dispatch;
+        ]
 
 let new_task_sheet model controls ~dispatch =
   Apple.vstack ~spacing:12.
@@ -334,17 +353,24 @@ let mobile_view ?(controls = default_controls)
                ~on_change:controls.set_search);
       ]
   in
+  let editing_todo = editing_todo model controls in
   tabs
-  |> Apple.sheet ~is_presented:controls.mobile_new_task_presented
-       ~content:(new_task_sheet model controls ~dispatch)
-       ~on_dismiss:(controls.set_mobile_new_task_presented false)
   |> Apple.sheet
-       ~is_presented:(Option.is_some (editing_todo model controls))
+       ~is_presented:
+         (controls.mobile_new_task_presented || Option.is_some editing_todo)
        ~content:
-         (match editing_todo model controls with
-         | None -> Apple.vstack []
-         | Some todo -> edit_task_sheet model controls ~dispatch todo)
-       ~on_dismiss:(controls.set_editing_todo_id "")
+         (match editing_todo with
+         | Some todo -> edit_task_sheet model controls ~dispatch todo
+         | None ->
+             if controls.mobile_new_task_presented then
+               new_task_sheet model controls ~dispatch
+             else Apple.vstack [])
+       ~on_dismiss:
+         (Apple.Action.many
+            [
+              controls.set_mobile_new_task_presented false;
+              controls.set_editing_todo_id "";
+            ])
 
 let adaptive_view ?(controls = default_controls) controller =
   Apple.adaptive_layout

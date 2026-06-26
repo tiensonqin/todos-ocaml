@@ -20,13 +20,23 @@ module Runtime = struct
     subscribers : (string, subscriber) Hashtbl.t;
   }
 
-  let default_db_path () =
-    match Sys.getenv_opt "BONSAI_TODOS_DB" with
+  let default_db_filename = "todos-ocaml.sqlite3"
+
+  let default_db_path_for_env ~getenv =
+    match getenv "BONSAI_TODOS_DB" with
     | Some path -> path
-    | None ->
-        Stdlib.Filename.concat
-          (Stdlib.Filename.get_temp_dir_name ())
-          "todos-ocaml.sqlite3"
+    | None -> (
+        match getenv "HOME" with
+        | Some home when not (String.is_empty home) ->
+            Stdlib.Filename.concat
+              (Stdlib.Filename.concat home "Documents")
+              default_db_filename
+        | _ ->
+            Stdlib.Filename.concat
+              (Stdlib.Filename.get_temp_dir_name ())
+              default_db_filename)
+
+  let default_db_path () = default_db_path_for_env ~getenv:Sys.getenv_opt
 
   let sessions : (string, session) Hashtbl.t = Hashtbl.create ()
   let sessions_mutex = Mutex.create ()

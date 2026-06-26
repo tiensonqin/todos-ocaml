@@ -246,6 +246,23 @@ let test_runtime_executes_commands_against_sqlite () =
   | _ -> fail "unexpected action");
   Stdlib.Sys.remove db_path
 
+let test_default_db_path_uses_app_home_documents () =
+  let getenv = function
+    | "HOME" -> Some "/app/container"
+    | _ -> None
+  in
+  require_equal_string
+    (Todos.Runtime.default_db_path_for_env ~getenv)
+    "/app/container/Documents/todos-ocaml.sqlite3";
+  let getenv = function
+    | "BONSAI_TODOS_DB" -> Some "/custom/todos.sqlite3"
+    | "HOME" -> Some "/app/container"
+    | _ -> None
+  in
+  require_equal_string
+    (Todos.Runtime.default_db_path_for_env ~getenv)
+    "/custom/todos.sqlite3"
+
 let test_runtime_notifies_query_subscribers_after_write () =
   let db_path = Stdlib.Filename.temp_file "todos-ocaml-subscribe" ".sqlite" in
   Stdlib.Sys.remove db_path;
@@ -301,6 +318,8 @@ let () =
     ("SQLite storage roundtrip", test_sqlite_storage_roundtrip);
     ( "Runtime executes commands against SQLite",
       test_runtime_executes_commands_against_sqlite );
+    ( "Default DB path uses app home documents",
+      test_default_db_path_uses_app_home_documents );
     ( "Runtime notifies query subscribers after write",
       test_runtime_notifies_query_subscribers_after_write );
   ]

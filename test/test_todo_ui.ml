@@ -2,6 +2,7 @@ open Todo_std
 module Apple = Bonsai_apple
 module Backend = Apple.For_testing.Backend
 module Renderer = Apple.Renderer.Make (Backend)
+module App = Apple.App.Make (Backend)
 module Todos = Todo_core
 
 let failf fmt = Printf.ksprintf failwith fmt
@@ -13,6 +14,23 @@ let assert_contains label text ~substring =
 let assert_not_contains label text ~substring =
   if String.is_substring text ~substring then
     failf "%s: expected output not to contain %S, got:\n%s" label substring text
+
+let count_substring text ~substring =
+  let text_length = String.length text in
+  let substring_length = String.length substring in
+  let rec loop index count =
+    if substring_length = 0 || index + substring_length > text_length then count
+    else if String.sub text index substring_length = substring then
+      loop (index + substring_length) (count + 1)
+    else loop (index + 1) count
+  in
+  loop 0 0
+
+let assert_occurrences label text ~substring ~count =
+  let actual = count_substring text ~substring in
+  if actual <> count then
+    failf "%s: expected %d occurrences of %S, got %d:\n%s" label count
+      substring actual text
 
 let assert_no_empty_label label text =
   let has_empty_label =
@@ -114,7 +132,10 @@ let test_mobile_model_renders_tabbed_phone_ui () =
   assert_contains "dashboard subtitle" output
     ~substring:"Let's get things done.";
   assert_contains "shared row" output ~substring:"iOS UI";
-  assert_contains "mobile scroll content" output ~substring:"scroll-view";
+  assert_contains "mobile uses native list" output ~substring:"list#";
+  assert_contains "mobile uses native list rows" output ~substring:"list-row#";
+  assert_occurrences "mobile root has one sheet modifier" output
+    ~substring:"sheet" ~count:1;
   assert_not_contains "mobile does not show inline composer" output
     ~substring:"placeholder=\"New task\"";
   assert_not_contains "mobile fixed input width" output
@@ -139,7 +160,7 @@ let test_mobile_selected_search_tab_keeps_searchable_on_search_content () =
   assert_contains "search tab selected" output
     ~substring:"tab-view#1 selected=search";
   assert_contains "search tab content owns searchable" output
-    ~substring:"key=search modifiers=[searchable]"
+    ~substring:"key=search modifiers=[searchable"
 
 let test_mobile_rows_support_edit_and_delete_swipes () =
   let model =
@@ -151,6 +172,72 @@ let test_mobile_rows_support_edit_and_delete_swipes () =
   let output = render_mobile model in
   assert_contains "row edit action" output ~substring:"actions=[Edit";
   assert_contains "row delete action" output ~substring:"Delete:destructive"
+
+let test_mobile_edit_action_opens_editor_sheet () =
+  Backend.reset ();
+  let existing =
+    todo ~id:"todo-1" ~title:"Editable task" ~created_at_ms:10 ()
+  in
+  let component graph =
+    let model, set_model =
+      Apple.state graph ~key:"model"
+        { Todos.Model.initial with todos = [ existing ] }
+    in
+    let route, set_route =
+      Apple.state graph ~key:"route" Todos.Screen.Route.All
+    in
+    let search, set_search = Apple.state graph ~key:"search" "" in
+    let selected_todo_id, set_selected_todo_id =
+      Apple.state graph ~key:"selected-todo-id" ""
+    in
+    let mobile_tab, set_mobile_tab =
+      Apple.state graph ~key:"mobile-tab" "today"
+    in
+    let mobile_new_task_presented, set_mobile_new_task_presented =
+      Apple.state graph ~key:"mobile-new-task-presented" false
+    in
+    let editing_todo_id, set_editing_todo_id =
+      Apple.state graph ~key:"editing-todo-id" ""
+    in
+    let dispatch action () =
+      let next_model, (_commands : Todos.Command.t list) =
+        Todos.Model.update model action
+      in
+      set_model next_model ()
+    in
+    Todo_ui.mobile_view
+      {
+        model;
+        dispatch;
+      }
+      ~controls:
+        {
+          route;
+          search;
+          selected_todo_id;
+          mobile_tab;
+          mobile_new_task_presented;
+          editing_todo_id;
+          set_route;
+          set_search;
+          set_selected_todo_id;
+          set_mobile_tab;
+          set_mobile_new_task_presented;
+          set_editing_todo_id;
+        }
+  in
+  let app = App.create component in
+  App.flush_and_render app;
+  let root =
+    match App.view app with
+    | Some root -> root
+    | None -> failwith "app did not render"
+  in
+  Backend.click_row_action_exn root ~path:[ 0; 1; 0 ] ~title:"Edit";
+  let output = Backend.show root in
+  assert_contains "edit sheet opens from row action" output ~substring:"Edit Task";
+  assert_contains "edit sheet receives row title" output
+    ~substring:"text=\"Editable task\" placeholder=\"Task title\""
 
 let test_mobile_edit_flow_uses_sheet_editor () =
   let model =
@@ -214,6 +301,7 @@ let () =
   test_mobile_search_tab_owns_searchable_modifier ();
   test_mobile_selected_search_tab_keeps_searchable_on_search_content ();
   test_mobile_rows_support_edit_and_delete_swipes ();
+  test_mobile_edit_action_opens_editor_sheet ();
   test_mobile_edit_flow_uses_sheet_editor ();
   test_mobile_add_flow_uses_sheet_editor ();
   test_adaptive_model_contains_phone_and_regular_layouts ();
