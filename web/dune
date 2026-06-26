@@ -1,18 +1,10 @@
-(executables
- (names todos_web todos_db_worker)
- (modes js)
- (libraries bonsai_web core js_of_ocaml todos_ocaml.core yojson)
+(melange.emit
+ (target dist)
+ (alias web-demo)
+ (module_systems es6)
+ (modules todos_web)
  (preprocess
-  (pps ppx_jane bonsai.ppx_bonsai js_of_ocaml-ppx)))
-
-(subdir
- app
- (rule
-  (alias build_web_static)
-  (deps ../todos_web.bc.js ../todos_db_worker.bc.js)
-  (targets todos_web.bc.js todos_db_worker.bc.js)
-  (mode promote)
-  (action
-   (progn
-    (copy ../todos_web.bc.js todos_web.bc.js)
-    (copy ../todos_db_worker.bc.js todos_db_worker.bc.js)))))
+  (pps melange.ppx))
+ (libraries bonsai_native)
+ (runtime_deps react_runtime.js)
+ (promote (until-clean)))

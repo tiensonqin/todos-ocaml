@@ -1,13 +1,25 @@
 (test
  (name test_todo_ui)
  (modules test_todo_ui)
- (libraries bonsai_apple core todos_ocaml.core todos_ocaml.apple_ui)
- (preprocess
-  (pps ppx_jane bonsai.ppx_bonsai)))
+ (libraries bonsai_apple todos_ocaml.core todos_ocaml.apple_ui))
 
 (test
  (name test_todo_model)
  (modules test_todo_model)
- (libraries core todos_ocaml)
- (preprocess
-  (pps ppx_jane bonsai.ppx_bonsai)))
+ (libraries todos_ocaml))
+
+(rule
+ (alias runtest)
+ (deps
+  migration_smoke.sh
+  ../dune-project
+  ../todos_ocaml.opam
+  ../app/dune
+  ../lib/dune
+  dune
+  ../web/dune
+  (alias ../web/web-demo))
+ (action
+  (chdir
+   %{workspace_root}
+   (run /bin/sh test/migration_smoke.sh))))

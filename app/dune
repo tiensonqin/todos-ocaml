@@ -24,15 +24,7 @@
   -ccopt
   "-miphoneos-version-min=17.0")
  (extra_objects BonsaiNativeSwiftUI)
- (libraries
-  todos_ocaml
-  todos_ocaml.apple_ui
-  bonsai
-  bonsai.driver
-  bonsai_apple.swiftui
-  core)
- (preprocess
-  (pps ppx_jane bonsai.ppx_bonsai)))
+ (libraries todos_ocaml todos_ocaml.apple_ui bonsai_apple.swiftui))
 
 (executable
  (name mac_app)
@@ -41,18 +33,20 @@
   (= %{context_name} simulator))
  (extra_objects BonsaiNativeSwiftUIMac)
  (link_flags
-  (:standard -cclib -framework -cclib AppKit -cclib -framework -cclib SwiftUI))
+  (:standard
+   -cclib
+   -framework
+   -cclib
+   AppKit
+   -cclib
+   -framework
+   -cclib
+   SwiftUI))
  (libraries
   todos_ocaml
   todos_ocaml.apple_ui
-  bonsai
-  bonsai.driver
   bonsai_apple.swiftui
-  core
-  core_kernel.caml_threads
-  threads.posix)
- (preprocess
-  (pps ppx_jane bonsai.ppx_bonsai)))
+  threads.posix))
 
 (rule
  (target BonsaiNativeSwiftUIMac.o)
@@ -101,7 +95,7 @@
 (subdir
  Todos.app
  (rule
- (alias default)
+  (alias default)
   (deps ../Info.plist ../Entitlements.plist ../ios_app.exe)
   (targets Info.plist Todos)
   (enabled_if
@@ -117,14 +111,6 @@
     (run
      bash
      -c
-     "\
-case \"$1\" in
-  simulator.ios|simulator-arm.ios|catalyst.ios)
-    codesign --force --sign \"${CODESIGN_IDENTITY:--}\" --timestamp=none Todos
-    ;;
-  *)
-    codesign --force --sign \"${CODESIGN_IDENTITY:-20C6BAC6D27E2CC8D07385E763D2618774727C50}\" --entitlements ../Entitlements.plist --timestamp=none Todos
-    ;;
-esac"
+     "case \"$1\" in\n  simulator.ios|simulator-arm.ios|catalyst.ios)\n    codesign --force --sign \"${CODESIGN_IDENTITY:--}\" --timestamp=none Todos\n    ;;\n  *)\n    codesign --force --sign \"${CODESIGN_IDENTITY:-20C6BAC6D27E2CC8D07385E763D2618774727C50}\" --entitlements ../Entitlements.plist --timestamp=none Todos\n    ;;\nesac"
      --
      %{context_name})))))

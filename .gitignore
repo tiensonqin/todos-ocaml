@@ -2,6 +2,9 @@ _build/
 tmp/
 screenshots/
 vendor/
+web/dist/
+web/node_modules/
+web/release/
 *.install
 *.merlin
 .DS_Store

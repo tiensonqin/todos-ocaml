@@ -2,10 +2,8 @@
  (name todos_ocaml_core)
  (public_name todos_ocaml.core)
  (wrapped false)
- (modules todo_core todos_transit)
- (libraries bonsai core datascript_ocaml persistent_sorted_set_ocaml)
- (preprocess
-  (pps ppx_jane bonsai.ppx_bonsai)))
+ (modules todo_core todo_std todos_transit)
+ (libraries bonsai_native datascript_ocaml persistent_sorted_set_ocaml))
 
 (library
  (name todos)
@@ -16,21 +14,11 @@
   (names todo_datascript_sqlite_stubs))
  (c_library_flags
   (:standard -lsqlite3))
- (libraries
-  bonsai
-  core
-  core_kernel.caml_threads
-  datascript_ocaml
-  todos_ocaml.core
-  threads.posix)
- (preprocess
-  (pps ppx_jane bonsai.ppx_bonsai)))
+ (libraries bonsai_native datascript_ocaml todos_ocaml.core threads.posix))
 
 (library
  (name todos_ocaml_apple_ui)
  (public_name todos_ocaml.apple_ui)
  (wrapped false)
  (modules todo_ui)
- (libraries bonsai bonsai_apple core todos_ocaml.core)
- (preprocess
-  (pps ppx_jane bonsai.ppx_bonsai)))
+ (libraries bonsai_native bonsai_apple todos_ocaml.core))
