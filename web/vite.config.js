@@ -6,6 +6,13 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const generatedNodeModules = path.join(root, "dist", "node_modules");
 
 export default defineConfig({
+  server: {
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Resource-Policy": "same-origin",
+    },
+  },
   resolve: {
     alias: {
       melange: path.join(generatedNodeModules, "melange"),
