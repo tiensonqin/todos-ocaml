@@ -16,9 +16,10 @@ depends: [
   "bonsai_apple"
 ]
 pin-depends: [
-  ["datascript_ocaml.dev" "git+https://github.com/logseq/datascript-ocaml.git#cd80734773913f821484e0fc5d4a99391ad0122d"]
-  ["bonsai_native.dev" "git+https://github.com/logseq/bonsai-native.git#14de6db066cf180f5f9bbb98ebcbc92ffea42fe7"]
-  ["bonsai_apple.dev" "git+https://github.com/logseq/bonsai-native.git#14de6db066cf180f5f9bbb98ebcbc92ffea42fe7"]
+  ["datascript_ocaml.dev" "git+https://github.com/logseq/datascript-ocaml.git#b4c201f573ed6fd51a85aa190a064c489ee2a5b6"]
+  ["melange-transit.dev" "git+https://github.com/RCmerci/melange-transit.git#f8388857a1e2c8d53b00dc968ad7bb333be882c3"]
+  ["bonsai_native.dev" "git+https://github.com/logseq/bonsai-native.git#2e60dc9264ceb6c6624f3c11d004515925bb25d7"]
+  ["bonsai_apple.dev" "git+https://github.com/logseq/bonsai-native.git#2e60dc9264ceb6c6624f3c11d004515925bb25d7"]
 ]
 build: [
   ["dune" "build" "-p" name "-j" jobs]

@@ -18,8 +18,9 @@ Cross-platform todo app built with `datascript-ocaml` for shared domain state,
 
 The opam file pins the upgraded dependency revisions:
 
-- `datascript_ocaml`: `cd80734773913f821484e0fc5d4a99391ad0122d`
-- `bonsai_native` / `bonsai_apple`: `e8b6e13db0fba9ebf49a35591204e14f3e3b32e6`
+- `datascript_ocaml`: `b4c201f573ed6fd51a85aa190a064c489ee2a5b6`
+- `melange-transit`: `f8388857a1e2c8d53b00dc968ad7bb333be882c3`
+- `bonsai_native` / `bonsai_apple`: `2e60dc9264ceb6c6624f3c11d004515925bb25d7`
 
 ```sh
 opam install . --deps-only --with-test

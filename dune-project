@@ -3,6 +3,22 @@
 
 (name todos_ocaml)
 
+(pin
+ (url "git+https://github.com/logseq/datascript-ocaml.git#b4c201f573ed6fd51a85aa190a064c489ee2a5b6")
+ (package (name datascript_ocaml)))
+
+(pin
+ (url "git+https://github.com/RCmerci/melange-transit.git#f8388857a1e2c8d53b00dc968ad7bb333be882c3")
+ (package (name melange-transit)))
+
+(pin
+ (url "git+https://github.com/logseq/bonsai-native.git#2e60dc9264ceb6c6624f3c11d004515925bb25d7")
+ (package (name bonsai_native)))
+
+(pin
+ (url "git+https://github.com/logseq/bonsai-native.git#2e60dc9264ceb6c6624f3c11d004515925bb25d7")
+ (package (name bonsai_apple)))
+
 (package
  (name todos_ocaml)
  (synopsis "Cross-platform todo app built with DataScript OCaml and Bonsai Native")

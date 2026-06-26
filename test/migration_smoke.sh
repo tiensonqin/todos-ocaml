@@ -129,7 +129,7 @@ if [ -e web/dist/web/react_runtime.js ] || [ -e web/dist/web/db_worker_client.js
   exit 1
 fi
 grep -q "@sqlite.org/sqlite-wasm" web/dist/web/sqlite_worker_runtime.js
-grep -q "melange-transit/transit.js" web/dist/web/todos_web.js
+grep -q "melange-transit.melange/transit.js" web/dist/web/todos_web.js
 test -s web/dist/node_modules/datascript_ocaml.melange_storage/datascript_melange_storage.js
-grep -q "melange-transit/transit.js" web/dist/node_modules/datascript_ocaml.melange_storage/datascript_melange_storage.js
+grep -q "melange-transit.melange/transit.js" web/dist/node_modules/datascript_ocaml.melange_storage/datascript_melange_storage.js
 grep -q "transit-js" web/dist/node_modules/melange-transit/transit.js

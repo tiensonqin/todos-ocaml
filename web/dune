@@ -5,6 +5,6 @@
  (modules todos_web todos_db_worker)
  (preprocess
   (pps melange.ppx))
- (libraries datascript_ocaml.melange_storage melange-transit)
+ (libraries datascript_ocaml.melange_storage melange-transit.melange)
  (runtime_deps sqlite_worker_runtime.js)
  (promote (until-clean)))

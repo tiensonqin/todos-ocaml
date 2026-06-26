@@ -1,4 +1,4 @@
-module Transit_json = Transit.Json
+module Transit_json = Transit_melange.Transit.Json
 
 module React = struct
   type node
