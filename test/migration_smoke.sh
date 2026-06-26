@@ -73,8 +73,13 @@ if grep -R "localStorage\\|getItem\\|setItem" web/todos_web.ml >/dev/null; then
   exit 1
 fi
 
-if rg -n "Bonsai_native|Native\\.|render_json|hstack|vstack" web/todos_web.ml web/react_runtime.js web/dune >/dev/null; then
+if rg -n "Bonsai_native|Native\\.|render_json|hstack|vstack" web/todos_web.ml web/dune >/dev/null; then
   echo "Web UI should render with Melange React directly, not Bonsai Native nodes" >&2
+  exit 1
+fi
+
+if [ -e web/react_runtime.js ] || [ -e web/db_worker_client.js ]; then
+  echo "Web should not keep hand-written JS bridges outside worker runtime" >&2
   exit 1
 fi
 
@@ -115,13 +120,14 @@ fi
 
 test -s web/dist/web/todos_web.js
 test -s web/dist/web/todos_db_worker.js
-test -s web/dist/web/react_runtime.js
 
-grep -q "createTodoRenderer" web/dist/web/todos_web.js
-grep -q "createRoot" web/dist/web/react_runtime.js
-grep -q "New task" web/dist/web/react_runtime.js
-grep -q "Todos" web/dist/web/react_runtime.js
-grep -q "todos_db_worker" web/dist/web/db_worker_client.js
+grep -q "New task" web/dist/web/todos_web.js
+grep -q "Todos" web/dist/web/todos_web.js
+grep -q "createRoot" web/dist/web/todos_web.js
+if [ -e web/dist/web/react_runtime.js ] || [ -e web/dist/web/db_worker_client.js ]; then
+  echo "Web dist should not include hand-written JS bridges outside worker runtime" >&2
+  exit 1
+fi
 grep -q "@sqlite.org/sqlite-wasm" web/dist/web/sqlite_worker_runtime.js
 grep -q "melange-transit/transit.js" web/dist/web/todos_web.js
 test -s web/dist/node_modules/datascript_ocaml.melange_storage/datascript_melange_storage.js

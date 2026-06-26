@@ -1,31 +1,83 @@
 module Transit_json = Transit.Json
 
-type renderer
+module React = struct
+  type node
+  type props
 
-external create_todo_renderer :
-  string ->
-  (unit -> string) ->
-  (string -> unit) ->
-  (unit -> unit) ->
-  (int -> unit) ->
-  (int -> unit) ->
-  renderer = "createTodoRenderer"
-[@@mel.module "./react_runtime.js"]
+  external create_element : string -> props -> node array -> node
+    = "createElement"
+  [@@mel.module "react"] [@@mel.variadic]
 
-external render : renderer -> unit = "render" [@@mel.send]
+  external text : string -> node = "%identity"
+  external empty_props : unit -> props = "" [@@mel.obj]
+  external class_props : className:string -> unit -> props = "" [@@mel.obj]
+  external key_class_props : key:int -> className:string -> unit -> props = ""
+  [@@mel.obj]
 
-type todo_store
+  external button_props :
+    className:string -> onClick:(unit -> unit) -> unit -> props = ""
+  [@@mel.obj]
 
-external create_todo_store : (string -> unit) -> todo_store = "createTodoStore"
-[@@mel.module "./db_worker_client.js"]
+  external form_props : className:string -> onSubmit:('event -> unit) -> unit -> props
+    = ""
+  [@@mel.obj]
 
-external post_store_message : todo_store -> string -> unit = "post" [@@mel.send]
+  external input_props :
+    value:string ->
+    placeholder:string ->
+    onChange:('event -> unit) ->
+    unit ->
+    props = ""
+  [@@mel.obj]
+
+  external event_target : 'event -> 'target = "target" [@@mel.get]
+  external target_value : 'target -> string = "value" [@@mel.get]
+  external prevent_default : 'event -> unit = "preventDefault" [@@mel.send]
+
+  let element tag ?(props = empty_props ()) children =
+    create_element tag props (Array.of_list children)
+
+  let event_value event = event |> event_target |> target_value
+end
+
+module React_dom = struct
+  type root
+  type dom_element
+
+  external document_get_element_by_id : string -> dom_element
+    = "getElementById"
+  [@@mel.scope "document"]
+
+  external create_root : dom_element -> root = "createRoot"
+  [@@mel.module "react-dom/client"]
+
+  external render : root -> React.node -> unit = "render" [@@mel.send]
+end
+
+module Web_worker = struct
+  type t
+  type options = { type_ : string [@mel.as "type"] }
+  type message_event
+
+  external create : string -> options -> t = "Worker" [@@mel.new]
+  external post_message : t -> string -> unit = "postMessage" [@@mel.send]
+  external set_on_message : t -> (message_event -> unit) -> unit = "onmessage"
+  [@@mel.set]
+
+  external event_data : message_event -> string = "data" [@@mel.get]
+
+  let start ~on_message =
+    let worker = create "./dist/web/todos_db_worker.js" { type_ = "module" } in
+    set_on_message worker (fun event -> on_message (event_data event));
+    worker
+end
 
 type todo = { id : int; title : string; completed : bool }
 
 let todos = ref []
 let draft = ref ""
-let renderer_ref : renderer option ref = ref None
+let root_ref : React_dom.root option ref = ref None
+let worker_ref : Web_worker.t option ref = ref None
 
 let todo_to_transit todo =
   Transit_json.Map
@@ -93,63 +145,32 @@ let decode_todos payload =
   if String.equal payload "" then []
   else try payload |> Transit_json.of_string |> todos_of_transit with _ -> []
 
-let rerender () =
-  match !renderer_ref with None -> () | Some renderer -> render renderer
-
-let handle_store_message message =
-  if String.starts_with ~prefix:"loaded:" message then (
-    let payload = String.sub message 7 (String.length message - 7) in
-    todos := decode_todos payload;
-    rerender ())
-  else if String.starts_with ~prefix:"failed:" message then rerender ()
-  else ()
-
-let store = create_todo_store handle_store_message
-let persist_todos value = post_store_message store ("save:" ^ encode_todos value)
-let load_todos () = post_store_message store "load"
+let active_todos todos = List.filter (fun todo -> not todo.completed) todos
+let completed_todos todos = List.filter (fun todo -> todo.completed) todos
 
 let next_id todos =
   todos |> List.map (fun todo -> todo.id) |> List.fold_left max 0 |> ( + ) 1
 
-let active_todos todos = List.filter (fun todo -> not todo.completed) todos
-let completed_todos todos = List.filter (fun todo -> todo.completed) todos
+let post_store_message message =
+  match !worker_ref with
+  | None -> ()
+  | Some worker -> Web_worker.post_message worker message
 
-let json_escape text =
-  let buffer = Buffer.create (String.length text + 8) in
-  String.iter
-    (function
-      | '"' -> Buffer.add_string buffer "\\\""
-      | '\\' -> Buffer.add_string buffer "\\\\"
-      | '\n' -> Buffer.add_string buffer "\\n"
-      | '\r' -> Buffer.add_string buffer "\\r"
-      | '\t' -> Buffer.add_string buffer "\\t"
-      | char -> Buffer.add_char buffer char)
-    text;
-  Buffer.contents buffer
+let persist_todos value =
+  post_store_message ("save:" ^ encode_todos value)
 
-let json_string text = "\"" ^ json_escape text ^ "\""
+let load_todos () = post_store_message "load"
 
-let todo_to_json todo =
-  Printf.sprintf {|{"id":%d,"title":%s,"completed":%s}|} todo.id
-    (json_string todo.title)
-    (if todo.completed then "true" else "false")
+let rec rerender () =
+  match !root_ref with
+  | None -> ()
+  | Some root -> React_dom.render root (app_view ())
 
-let todos_to_json todos =
-  todos |> List.map todo_to_json |> String.concat "," |> Printf.sprintf "[%s]"
-
-let state_json () =
-  let active = active_todos !todos in
-  let completed = completed_todos !todos in
-  Printf.sprintf
-    {|{"draft":%s,"activeCount":%d,"completedCount":%d,"activeTodos":%s,"completedTodos":%s}|}
-    (json_string !draft) (List.length active) (List.length completed)
-    (todos_to_json active) (todos_to_json completed)
-
-let set_draft value =
+and set_draft value =
   draft := value;
   rerender ()
 
-let add_todo () =
+and add_todo () =
   let title = String.trim !draft in
   if not (String.equal title "") then (
     let updated =
@@ -160,7 +181,7 @@ let add_todo () =
     persist_todos updated;
     rerender ())
 
-let toggle_todo id =
+and toggle_todo id =
   let updated =
     !todos
     |> List.map (fun todo ->
@@ -171,17 +192,97 @@ let toggle_todo id =
   persist_todos updated;
   rerender ()
 
-let delete_todo id =
+and delete_todo id =
   let updated = !todos |> List.filter (fun todo -> todo.id <> id) in
   todos := updated;
   persist_todos updated;
   rerender ()
 
-let renderer =
-  create_todo_renderer "app" state_json set_draft add_todo toggle_todo
-    delete_todo
+and todo_row todo =
+  React.element "li"
+    ~props:
+      (React.key_class_props ~key:todo.id
+         ~className:("todo-row" ^ if todo.completed then " completed" else "")
+         ())
+    [
+      React.element "button"
+        ~props:(React.button_props ~className:"icon-button" ~onClick:(fun () -> toggle_todo todo.id) ())
+        [ React.text (if todo.completed then "✓" else "") ];
+      React.element "span" [ React.text todo.title ];
+      React.element "button"
+        ~props:(React.button_props ~className:"delete-button" ~onClick:(fun () -> delete_todo todo.id) ())
+        [ React.text "Delete" ];
+    ]
+
+and todo_column ~title ~empty_text todos =
+  React.element "section"
+    [
+      React.element "h2" [ React.text title ];
+      (match todos with
+      | [] ->
+          React.element "p" ~props:(React.class_props ~className:"muted" ())
+            [ React.text empty_text ]
+      | todos -> React.element "ul" (List.map todo_row todos));
+    ]
+
+and app_view () =
+  let active = active_todos !todos in
+  let completed = completed_todos !todos in
+  React.element "main" ~props:(React.class_props ~className:"app-shell" ())
+    [
+      React.element "aside" ~props:(React.class_props ~className:"sidebar" ())
+        [
+          React.element "h1" [ React.text "Todos" ];
+          React.element "p" ~props:(React.class_props ~className:"counter" ())
+            [ React.text (Printf.sprintf "%d active" (List.length active)) ];
+          React.element "p"
+            ~props:(React.class_props ~className:"counter muted" ())
+            [
+              React.text
+                (Printf.sprintf "%d completed" (List.length completed));
+            ];
+        ];
+      React.element "section" ~props:(React.class_props ~className:"workspace" ())
+        [
+          React.element "form"
+            ~props:
+              (React.form_props ~className:"composer"
+                 ~onSubmit:(fun event ->
+                   React.prevent_default event;
+                   add_todo ())
+                 ())
+            [
+              React.element "input"
+                ~props:
+                  (React.input_props ~value:!draft ~placeholder:"New task"
+                     ~onChange:(fun event -> set_draft (React.event_value event))
+                     ())
+                [];
+              React.element "button" [ React.text "Add" ];
+            ];
+          React.element "div" ~props:(React.class_props ~className:"columns" ())
+            [
+              todo_column ~title:"Active" ~empty_text:"Nothing active right now."
+                active;
+              todo_column ~title:"Done" ~empty_text:"Nothing completed yet."
+                completed;
+            ];
+        ];
+    ]
+
+let handle_store_message message =
+  if String.starts_with ~prefix:"loaded:" message then (
+    let payload = String.sub message 7 (String.length message - 7) in
+    todos := decode_todos payload;
+    rerender ())
+  else if String.starts_with ~prefix:"failed:" message then rerender ()
+  else ()
 
 let () =
-  renderer_ref := Some renderer;
-  render renderer;
+  let root =
+    React_dom.create_root (React_dom.document_get_element_by_id "app")
+  in
+  root_ref := Some root;
+  worker_ref := Some (Web_worker.start ~on_message:handle_store_message);
+  rerender ();
   load_todos ()

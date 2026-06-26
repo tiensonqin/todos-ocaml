@@ -397,16 +397,32 @@ let view ?(controls = default_controls)
 
 let mobile_view ?(controls = default_controls)
     ({ model; dispatch } : Todos.Controller.t) =
+  let clear_search_on_exit =
+    if
+      String.equal controls.mobile_tab search_tab
+      && not (String.is_empty controls.search)
+    then
+      [
+        controls.set_search "";
+        controls.set_visible_todo_limit initial_visible_todo_limit;
+        dispatch
+          (load_page ~limit:initial_visible_todo_limit ~offset:0 ~search:"");
+      ]
+    else []
+  in
   let select_mobile_tab tab_id =
     match tab_id with
     | tab_id when String.equal tab_id add_tab ->
-        controls.set_mobile_new_task_presented true
+        Apple.Action.many
+          (clear_search_on_exit
+          @ [ controls.set_mobile_new_task_presented true ])
     | tab_id ->
         let route =
           if String.equal tab_id upcoming_tab then Route.Active else Route.All
         in
         Apple.Action.many
-          [ controls.set_mobile_tab tab_id; controls.set_route route ]
+          (clear_search_on_exit
+          @ [ controls.set_mobile_tab tab_id; controls.set_route route ])
   in
   let tabs =
     Apple.tab_view ~selected:controls.mobile_tab ~on_select:select_mobile_tab

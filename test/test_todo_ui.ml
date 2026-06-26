@@ -572,6 +572,30 @@ let test_mobile_search_queries_full_runtime_dataset () =
   assert_not_contains "search does not keep first window" output
     ~substring:"Task 00001"
 
+let test_mobile_search_is_cleared_when_leaving_search_tab () =
+  let all_todos =
+    [
+      todo ~id:"todo-1" ~title:"Needle task" ~created_at_ms:1 ();
+      todo ~id:"todo-2" ~title:"Regular task" ~created_at_ms:2 ();
+    ]
+  in
+  let root, dispatched_commands = runtime_backed_mobile_app all_todos in
+  Backend.select_tab_exn root ~id:"search";
+  Backend.change_search_exn root ~path:[ 3 ] ~text:"needle";
+  Backend.select_tab_exn root ~id:"today";
+  (match !dispatched_commands with
+  | {
+      Todos.Command.request = Load_page { limit = 80; offset = 0; search = "" };
+      _;
+    }
+    :: _ ->
+      ()
+  | _ -> failf "leaving search should reload the default unfiltered page");
+  Backend.select_tab_exn root ~id:"search";
+  let output = Backend.show root in
+  assert_not_contains "search input is cleared after leaving search tab" output
+    ~substring:"needle"
+
 let test_mobile_edit_action_opens_editor_sheet () =
   Backend.reset ();
   let existing =
@@ -709,6 +733,7 @@ let () =
   test_component_initial_load_uses_bounded_window_only ();
   test_search_change_dispatches_bounded_db_query ();
   test_mobile_search_queries_full_runtime_dataset ();
+  test_mobile_search_is_cleared_when_leaving_search_tab ();
   test_mobile_edit_action_opens_editor_sheet ();
   test_mobile_edit_flow_uses_sheet_editor ();
   test_mobile_add_flow_uses_sheet_editor ();
