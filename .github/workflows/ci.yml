@@ -35,20 +35,13 @@ jobs:
           opam repo add janestreet-bleeding git+https://github.com/janestreet/opam-repository.git
           opam update
 
+      - name: Pin unpublished git dependencies
+        run: |
+          opam pin add --no-action persistent_sorted_set_ocaml.dev 'git+https://github.com/logseq/persistent-sorted-set-ocaml.git#074401d81ca22b9d44c725d7f171a67d69765a31'
+          opam pin add --no-action melange-edn.0.5.0 'git+https://github.com/RCmerci/melange-edn.git#bdc79c1d1d6edc9b0874113759bee29ce45f53f5'
+
       - name: Install OCaml dependencies
         run: opam install . --deps-only --with-test -y
 
-      - name: Build focused test targets
-        run: |
-          opam exec -- dune build \
-            test/test_todo_store.exe \
-            test/test_todo_presentation.exe \
-            test/test_todo_app_state.exe \
-            test/test_todo_ui.exe
-
-      - name: Run focused tests
-        run: |
-          opam exec -- _build/default/test/test_todo_store.exe
-          opam exec -- _build/default/test/test_todo_presentation.exe
-          opam exec -- _build/default/test/test_todo_app_state.exe
-          opam exec -- _build/default/test/test_todo_ui.exe
+      - name: Run tests
+        run: opam exec -- dune runtest
