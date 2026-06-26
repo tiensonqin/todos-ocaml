@@ -11,18 +11,22 @@ type controls = {
   mobile_tab : string;
   mobile_new_task_presented : bool;
   editing_todo_id : string;
+  visible_todo_limit : int;
   set_route : Route.t -> unit Apple.Action.t;
   set_search : string -> unit Apple.Action.t;
   set_selected_todo_id : string -> unit Apple.Action.t;
   set_mobile_tab : string -> unit Apple.Action.t;
   set_mobile_new_task_presented : bool -> unit Apple.Action.t;
   set_editing_todo_id : string -> unit Apple.Action.t;
+  set_visible_todo_limit : int -> unit Apple.Action.t;
 }
 
 let today_tab = "today"
 let upcoming_tab = "upcoming"
 let add_tab = "add"
 let search_tab = "search"
+let initial_visible_todo_limit = 80
+let visible_todo_limit_step = 80
 
 let default_controls =
   {
@@ -32,15 +36,29 @@ let default_controls =
     mobile_tab = today_tab;
     mobile_new_task_presented = false;
     editing_todo_id = "";
+    visible_todo_limit = initial_visible_todo_limit;
     set_route = (fun _ -> Apple.Action.ignore);
     set_search = (fun _ -> Apple.Action.ignore);
     set_selected_todo_id = (fun _ -> Apple.Action.ignore);
     set_mobile_tab = (fun _ -> Apple.Action.ignore);
     set_mobile_new_task_presented = (fun _ -> Apple.Action.ignore);
     set_editing_todo_id = (fun _ -> Apple.Action.ignore);
+    set_visible_todo_limit = (fun _ -> Apple.Action.ignore);
   }
 
 let next_todo = Screen.next_todo
+
+type visible_todo_item =
+  | Todo_item of Todos.Todo.t
+  | Load_more_item of { total_count : int }
+
+let take values ~count =
+  let rec loop remaining values acc =
+    match (remaining, values) with
+    | 0, _ | _, [] -> List.rev acc
+    | remaining, value :: values -> loop (remaining - 1) values (value :: acc)
+  in
+  if count <= 0 then [] else loop count values []
 
 let empty_state title =
   Apple.vstack ~spacing:8.
@@ -137,14 +155,40 @@ let sidebar ~route ~set_route =
     ~key:Route.id
     ~row:(route_row ~selected:route ~on_select:set_route)
 
-let content_list ?on_edit model ~route ~search ~set_selected_todo_id ~dispatch =
-  let todos = Screen.visible_todos ~route ~search model.Todos.Model.todos in
+let visible_todo_item_key = function
+  | Todo_item todo -> todo.Todos.Todo.id
+  | Load_more_item _ -> "load-more"
+
+let load_more_row controls ~total_count =
+  let next_limit =
+    min total_count (controls.visible_todo_limit + visible_todo_limit_step)
+  in
+  Apple.text ~color:Secondary "Loading more..."
+  |> Apple.on_appear ~on_appear:(controls.set_visible_todo_limit next_limit)
+
+let content_list ?on_edit model controls ~route ~search ~set_selected_todo_id
+    ~dispatch =
+  let all_todos = Screen.visible_todos ~route ~search model.Todos.Model.todos in
+  let todos = take all_todos ~count:controls.visible_todo_limit in
   match todos with
   | [] -> empty_state "No matching tasks"
   | todos ->
-      Apple.list todos
-        ~key:(fun (todo : Todos.Todo.t) -> todo.id)
-        ~row:(todo_row ~dispatch ~on_select:set_selected_todo_id ?on_edit)
+      let total_count = List.length all_todos in
+      let rows =
+        List.map todos ~f:(fun todo -> Todo_item todo)
+        @
+        if total_count > controls.visible_todo_limit then
+          [ Load_more_item { total_count } ]
+        else []
+      in
+      Apple.vstack ~spacing:8.
+        [
+          Apple.list rows ~key:visible_todo_item_key ~row:(function
+            | Todo_item todo ->
+                todo_row ~dispatch ~on_select:set_selected_todo_id ?on_edit todo
+            | Load_more_item { total_count } ->
+                load_more_row controls ~total_count);
+        ]
 
 let route_content model controls ~route ~dispatch =
   let screen =
@@ -168,7 +212,7 @@ let route_content model controls ~route ~dispatch =
          | None -> []
          | Some error -> [ Apple.text ~color:Secondary error ]);
          [
-           content_list model ~route ~search:controls.search
+           content_list model controls ~route ~search:controls.search
              ~set_selected_todo_id:controls.set_selected_todo_id ~dispatch;
          ];
        ])
@@ -193,12 +237,11 @@ let mobile_task_screen model controls ~route ~dispatch =
       ]
   in
   match
-    Screen.visible_todos ~route ~search:controls.search
-      model.Todos.Model.todos
+    Screen.visible_todos ~route ~search:controls.search model.Todos.Model.todos
   with
   | [] -> empty_state "No matching tasks" |> mobile_empty_screen
   | _ ->
-      content_list model ~route ~search:controls.search
+      content_list model controls ~route ~search:controls.search
         ~set_selected_todo_id:controls.set_selected_todo_id ~on_edit ~dispatch
 
 let mobile_dashboard model controls ~dispatch =
@@ -228,8 +271,9 @@ let mobile_dashboard model controls ~dispatch =
       Apple.vstack ~spacing:0.
         [
           header;
-          content_list model ~route:Route.All ~search:controls.search
-            ~set_selected_todo_id:controls.set_selected_todo_id ~on_edit ~dispatch;
+          content_list model controls ~route:Route.All ~search:controls.search
+            ~set_selected_todo_id:controls.set_selected_todo_id ~on_edit
+            ~dispatch;
         ]
 
 let new_task_sheet model controls ~dispatch =
@@ -341,16 +385,22 @@ let mobile_view ?(controls = default_controls)
     Apple.tab_view ~selected:controls.mobile_tab ~on_select:select_mobile_tab
       [
         Apple.tab ~id:today_tab ~title:"Today" ~system_image:"sun.max"
-          (mobile_dashboard model controls ~dispatch);
+          (if String.equal controls.mobile_tab today_tab then
+             mobile_dashboard model controls ~dispatch
+           else Apple.vstack []);
         Apple.tab ~id:upcoming_tab ~title:"Upcoming" ~system_image:"calendar"
-          (mobile_task_screen model controls ~route:Route.Active ~dispatch);
+          (if String.equal controls.mobile_tab upcoming_tab then
+             mobile_task_screen model controls ~route:Route.Active ~dispatch
+           else Apple.vstack []);
         Apple.tab ~id:add_tab ~title:"Add" ~system_image:"plus"
           (Apple.vstack []);
         Apple.tab ~id:search_tab ~title:"Search" ~system_image:"magnifyingglass"
           ~role:Apple.Search
-          (mobile_task_screen model controls ~route:Route.All ~dispatch
-          |> Apple.searchable ~text:controls.search
-               ~on_change:controls.set_search);
+          (if String.equal controls.mobile_tab search_tab then
+             mobile_task_screen model controls ~route:Route.All ~dispatch
+             |> Apple.searchable ~text:controls.search
+                  ~on_change:controls.set_search
+           else Apple.vstack []);
       ]
   in
   let editing_todo = editing_todo model controls in
@@ -394,6 +444,9 @@ let component_with_view ?(run_command = Todos.Controller.ignore_command) render
   let editing_todo_id, set_editing_todo_id =
     Apple.state graph ~key:"editing-todo-id" ""
   in
+  let visible_todo_limit, set_visible_todo_limit =
+    Apple.state graph ~key:"visible-todo-limit" initial_visible_todo_limit
+  in
   let (_ : unit) =
     Bonsai_native.Graph.subscribe graph ~key:"todos-query-lifecycle" ~default:()
       (fun ~emit:_ ->
@@ -414,12 +467,14 @@ let component_with_view ?(run_command = Todos.Controller.ignore_command) render
         mobile_tab;
         mobile_new_task_presented;
         editing_todo_id;
+        visible_todo_limit;
         set_route;
         set_search;
         set_selected_todo_id;
         set_mobile_tab;
         set_mobile_new_task_presented;
         set_editing_todo_id;
+        set_visible_todo_limit;
       }
 
 let component ?run_command graph =

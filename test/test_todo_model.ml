@@ -161,6 +161,26 @@ let test_datascript_store_roundtrip () =
   require_todos (list store)
     [ todo ~id:"todo-2" ~title:"Mac app" ~completed:true ~created_at_ms:20 () ]
 
+let test_datascript_store_keeps_created_order_after_toggle () =
+  let open Todos.Store in
+  let store =
+    Stdlib.List.init 100 (fun index ->
+        let created_at_ms = index + 1 in
+        Add
+          (todo
+             ~id:(Printf.sprintf "todo-%05d" created_at_ms)
+             ~title:(Printf.sprintf "Task %05d" created_at_ms)
+             ~created_at_ms ()))
+    |> List.fold ~init:(empty ()) ~f:apply_write
+  in
+  let store = apply_write store (Toggle "todo-00001") in
+  match list store with
+  | first :: _ ->
+      require_todo first
+        (todo ~id:"todo-00001" ~title:"Task 00001" ~completed:true
+           ~created_at_ms:1 ())
+  | [] -> fail "store should contain todos"
+
 let test_restore_or_create_reports_unreadable_non_empty_storage () =
   let storage : Todos.Store.Ds.storage =
     {
@@ -247,10 +267,7 @@ let test_runtime_executes_commands_against_sqlite () =
   Stdlib.Sys.remove db_path
 
 let test_default_db_path_uses_app_home_documents () =
-  let getenv = function
-    | "HOME" -> Some "/app/container"
-    | _ -> None
-  in
+  let getenv = function "HOME" -> Some "/app/container" | _ -> None in
   require_equal_string
     (Todos.Runtime.default_db_path_for_env ~getenv)
     "/app/container/Documents/todos-ocaml.sqlite3";
@@ -311,6 +328,8 @@ let () =
     ( "loaded and failed update controller state",
       test_loaded_and_failed_update_controller_state );
     ("DataScript store roundtrip", test_datascript_store_roundtrip);
+    ( "DataScript store keeps created order after toggle",
+      test_datascript_store_keeps_created_order_after_toggle );
     ( "restore_or_create reports unreadable non-empty storage",
       test_restore_or_create_reports_unreadable_non_empty_storage );
     ( "screen model filters routes search and selection",

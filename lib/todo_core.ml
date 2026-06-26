@@ -138,8 +138,8 @@ module Store = struct
     |> Seq.filter_map todo_of_entity
     |> Stdlib.List.of_seq
     |> List.sort ~compare:(fun (left : Todo.t) (right : Todo.t) ->
-        let left_key = (left.completed, left.created_at_ms, left.id) in
-        let right_key = (right.completed, right.created_at_ms, right.id) in
+        let left_key = (left.created_at_ms, left.id) in
+        let right_key = (right.created_at_ms, right.id) in
         compare left_key right_key)
 end
 

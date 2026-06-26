@@ -8,12 +8,14 @@ type controls = {
   mobile_tab : string;
   mobile_new_task_presented : bool;
   editing_todo_id : string;
+  visible_todo_limit : int;
   set_route : Todos.Screen.Route.t -> unit Apple.Action.t;
   set_search : string -> unit Apple.Action.t;
   set_selected_todo_id : string -> unit Apple.Action.t;
   set_mobile_tab : string -> unit Apple.Action.t;
   set_mobile_new_task_presented : bool -> unit Apple.Action.t;
   set_editing_todo_id : string -> unit Apple.Action.t;
+  set_visible_todo_limit : int -> unit Apple.Action.t;
 }
 
 val default_controls : controls

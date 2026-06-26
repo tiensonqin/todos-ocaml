@@ -29,8 +29,8 @@ let count_substring text ~substring =
 let assert_occurrences label text ~substring ~count =
   let actual = count_substring text ~substring in
   if actual <> count then
-    failf "%s: expected %d occurrences of %S, got %d:\n%s" label count
-      substring actual text
+    failf "%s: expected %d occurrences of %S, got %d:\n%s" label count substring
+      actual text
 
 let assert_no_empty_label label text =
   let has_empty_label =
@@ -81,6 +81,77 @@ let render_adaptive ?(controls = Todo_ui.default_controls) model =
       (Todo_ui.adaptive_view controller ~controls)
   in
   Backend.show (Renderer.view mounted)
+
+let store_of_todos todos =
+  todos
+  |> List.fold ~init:(Todos.Store.empty ()) ~f:(fun store todo ->
+      Todos.Store.apply_write store (Add todo))
+
+let apply_command_to_model model (command : Todos.Command.t) =
+  match command.request with
+  | Persist write ->
+      let store = store_of_todos model.Todos.Model.todos in
+      {
+        model with
+        todos = Todos.Store.apply_write store write |> Todos.Store.list;
+      }
+  | Load_all | Subscribe_query _ | Unsubscribe_query _ -> model
+
+let interactive_mobile_app initial_model =
+  Backend.reset ();
+  let component graph =
+    let model, set_model = Apple.state graph ~key:"model" initial_model in
+    let route, set_route =
+      Apple.state graph ~key:"route" Todos.Screen.Route.All
+    in
+    let search, set_search = Apple.state graph ~key:"search" "" in
+    let selected_todo_id, set_selected_todo_id =
+      Apple.state graph ~key:"selected-todo-id" ""
+    in
+    let mobile_tab, set_mobile_tab =
+      Apple.state graph ~key:"mobile-tab" "today"
+    in
+    let mobile_new_task_presented, set_mobile_new_task_presented =
+      Apple.state graph ~key:"mobile-new-task-presented" false
+    in
+    let editing_todo_id, set_editing_todo_id =
+      Apple.state graph ~key:"editing-todo-id" ""
+    in
+    let visible_todo_limit, set_visible_todo_limit =
+      Apple.state graph ~key:"visible-todo-limit"
+        Todo_ui.default_controls.visible_todo_limit
+    in
+    let dispatch action () =
+      let next_model, commands = Todos.Model.update model action in
+      let next_model =
+        List.fold commands ~init:next_model ~f:apply_command_to_model
+      in
+      set_model next_model ()
+    in
+    Todo_ui.mobile_view { model; dispatch }
+      ~controls:
+        {
+          route;
+          search;
+          selected_todo_id;
+          mobile_tab;
+          mobile_new_task_presented;
+          editing_todo_id;
+          visible_todo_limit;
+          set_route;
+          set_search;
+          set_selected_todo_id;
+          set_mobile_tab;
+          set_mobile_new_task_presented;
+          set_editing_todo_id;
+          set_visible_todo_limit;
+        }
+  in
+  let app = App.create component in
+  App.flush_and_render app;
+  match App.view app with
+  | Some root -> root
+  | None -> failwith "app did not render"
 
 let test_empty_model_renders_split_view_composer_and_search () =
   let output = render Todos.Model.initial in
@@ -151,7 +222,7 @@ let test_mobile_search_tab_owns_searchable_modifier () =
   let output = render_mobile Todos.Model.initial ~controls in
   assert_contains "search tab exists" output
     ~substring:"search:Search:magnifyingglass:search";
-  assert_contains "search tab content is searchable" output
+  assert_not_contains "inactive search tab is not built eagerly" output
     ~substring:"searchable"
 
 let test_mobile_selected_search_tab_keeps_searchable_on_search_content () =
@@ -172,6 +243,77 @@ let test_mobile_rows_support_edit_and_delete_swipes () =
   let output = render_mobile model in
   assert_contains "row edit action" output ~substring:"actions=[Edit";
   assert_contains "row delete action" output ~substring:"Delete:destructive"
+
+let test_mobile_large_dataset_renders_initial_window_only () =
+  let todos =
+    Stdlib.List.init 10_000 (fun index ->
+        let created_at_ms = index + 1 in
+        todo
+          ~id:(Printf.sprintf "todo-%05d" created_at_ms)
+          ~title:(Printf.sprintf "Task %05d" created_at_ms)
+          ~created_at_ms ())
+  in
+  let output = render_mobile { Todos.Model.initial with todos } in
+  assert_contains "first visible task" output ~substring:"Task 00001";
+  assert_contains "last initial task" output ~substring:"Task 00080";
+  assert_not_contains "outside initial task window" output
+    ~substring:"Task 00081";
+  assert_occurrences "initial mobile rows" output ~substring:"list-row#"
+    ~count:80
+
+let test_mobile_large_dataset_toggles_first_visible_row_in_place () =
+  let todos =
+    Stdlib.List.init 100 (fun index ->
+        let created_at_ms = index + 1 in
+        todo
+          ~id:(Printf.sprintf "todo-%05d" created_at_ms)
+          ~title:(Printf.sprintf "Task %05d" created_at_ms)
+          ~created_at_ms ())
+  in
+  let root = interactive_mobile_app { Todos.Model.initial with todos } in
+  Backend.click_row_leading_exn root ~path:[ 0; 1; 0; 0 ];
+  let output = Backend.show root in
+  assert_contains "toggled row remains visible" output
+    ~substring:"title=\"Task 00001\"";
+  assert_contains "toggled row is completed" output
+    ~substring:"trailing=\"Done\"";
+  assert_contains "toggled row has selected leading button" output
+    ~substring:"leading=circle:true"
+
+let test_mobile_edit_sheet_save_updates_title () =
+  let root =
+    interactive_mobile_app
+      {
+        Todos.Model.initial with
+        todos =
+          [ todo ~id:"todo-1" ~title:"Editable task" ~created_at_ms:10 () ];
+      }
+  in
+  Backend.click_row_action_exn root ~path:[ 0; 1; 0; 0 ] ~title:"Edit";
+  Backend.change_sheet_text_exn root ~path:[] ~sheet_path:[ 1 ]
+    ~text:"Renamed task";
+  Backend.click_sheet_exn root ~path:[] ~sheet_path:[ 2; 1 ];
+  let output = Backend.show root in
+  assert_contains "edited title visible" output ~substring:"Renamed task";
+  assert_not_contains "old title replaced" output ~substring:"Editable task"
+
+let test_mobile_loads_more_when_bottom_sentinel_appears () =
+  let todos =
+    Stdlib.List.init 200 (fun index ->
+        let created_at_ms = index + 1 in
+        todo
+          ~id:(Printf.sprintf "todo-%05d" created_at_ms)
+          ~title:(Printf.sprintf "Task %05d" created_at_ms)
+          ~created_at_ms ())
+  in
+  let root = interactive_mobile_app { Todos.Model.initial with todos } in
+  assert_occurrences "initial rows" (Backend.show root) ~substring:"list-row#"
+    ~count:80;
+  Backend.appear_exn root ~path:[ 0; 1; 0; 80 ];
+  let output = Backend.show root in
+  assert_contains "newly visible page" output ~substring:"Task 00160";
+  assert_occurrences "rows after sentinel appears" output ~substring:"list-row#"
+    ~count:160
 
 let test_mobile_edit_action_opens_editor_sheet () =
   Backend.reset ();
@@ -205,11 +347,7 @@ let test_mobile_edit_action_opens_editor_sheet () =
       in
       set_model next_model ()
     in
-    Todo_ui.mobile_view
-      {
-        model;
-        dispatch;
-      }
+    Todo_ui.mobile_view { model; dispatch }
       ~controls:
         {
           route;
@@ -218,12 +356,15 @@ let test_mobile_edit_action_opens_editor_sheet () =
           mobile_tab;
           mobile_new_task_presented;
           editing_todo_id;
+          visible_todo_limit = Todo_ui.default_controls.visible_todo_limit;
           set_route;
           set_search;
           set_selected_todo_id;
           set_mobile_tab;
           set_mobile_new_task_presented;
           set_editing_todo_id;
+          set_visible_todo_limit =
+            Todo_ui.default_controls.set_visible_todo_limit;
         }
   in
   let app = App.create component in
@@ -233,9 +374,10 @@ let test_mobile_edit_action_opens_editor_sheet () =
     | Some root -> root
     | None -> failwith "app did not render"
   in
-  Backend.click_row_action_exn root ~path:[ 0; 1; 0 ] ~title:"Edit";
+  Backend.click_row_action_exn root ~path:[ 0; 1; 0; 0 ] ~title:"Edit";
   let output = Backend.show root in
-  assert_contains "edit sheet opens from row action" output ~substring:"Edit Task";
+  assert_contains "edit sheet opens from row action" output
+    ~substring:"Edit Task";
   assert_contains "edit sheet receives row title" output
     ~substring:"text=\"Editable task\" placeholder=\"Task title\""
 
@@ -301,6 +443,10 @@ let () =
   test_mobile_search_tab_owns_searchable_modifier ();
   test_mobile_selected_search_tab_keeps_searchable_on_search_content ();
   test_mobile_rows_support_edit_and_delete_swipes ();
+  test_mobile_large_dataset_renders_initial_window_only ();
+  test_mobile_large_dataset_toggles_first_visible_row_in_place ();
+  test_mobile_edit_sheet_save_updates_title ();
+  test_mobile_loads_more_when_bottom_sentinel_appears ();
   test_mobile_edit_action_opens_editor_sheet ();
   test_mobile_edit_flow_uses_sheet_editor ();
   test_mobile_add_flow_uses_sheet_editor ();
